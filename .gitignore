@@ -5,6 +5,15 @@ venv/
 arag-data-loader/Connection_to_postgres.py
 arag-data-loader/Database_for_chatHistory.py
 
+arag-data-loader/alter_table_personal_information_role.py
+arag-data-loader/create_chat_messages_user_sessions.py
+arag-data-loader/create_feedback_table.py
+arag-data-loader/create_logs_prediction_stats_table.py
+arag-data-loader/create_model_training_history_table.py
+arag-data-loader/create_patient_consultations_table.py
+arag-data-loader/create_users_table.py
+
+plant_medicator
 
 # Node.js
 node_modules/

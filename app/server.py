@@ -1,57 +1,795 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from langserve import add_routes
-from starlette.staticfiles import StaticFiles
+from pydantic import BaseModel
+from typing import Dict, Any, Optional
+from contextlib import asynccontextmanager
+import psycopg2
+from datetime import datetime, timedelta
+import traceback
+import uuid
+import importlib.util
+import sys
 import os
-import shutil
-import subprocess
-from app.rag_chain import final_chain
+import logging
 
-app = FastAPI()
+
+# Configurar logging más detallado
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Para mostrar en consola
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Comprobar las rutas del proyecto para los imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+
+# Importar dependencias con try/except para manejar errores
+try:
+    from app.rag_chain import process_consultation_with_safety
+    from app.hybrid_recommender import HybridRecommender
+except ImportError:
+    # Si falla, intentar importar de manera relativa
+    try:
+        from .rag_chain import process_consultation_with_safety
+        from .hybrid_recommender import HybridRecommender
+    except ImportError:
+        # Si ambos fallan, importar directamente (considerando que estamos en el directorio app)
+        try:
+            import rag_chain
+            from hybrid_recommender import HybridRecommender
+            process_consultation_with_safety = rag_chain.process_consultation_with_safety
+        except ImportError as e:
+            print(f"Error de importación crítico: {e}")
+            raise
+
+# Importar bcrypt para el hash de contraseñas
+try:
+    import bcrypt
+except ImportError:
+    print("WARNING: bcrypt not installed. Installing...")
+    import pip
+    pip.main(['install', 'bcrypt'])
+    import bcrypt
+
+# Importar passlib.hash para compatibilidad
+try:
+    from passlib.hash import bcrypt as passlib_bcrypt
+except ImportError:
+    print("WARNING: passlib not installed. Some functionality may be limited.")
+    passlib_bcrypt = None
+
+# Importar jose para JWT
+try:
+    from jose import JWTError, jwt
+except ImportError:
+    print("WARNING: python-jose not installed. Installing...")
+    import pip
+    pip.main(['install', 'python-jose[cryptography]'])
+    from jose import JWTError, jwt
+
+# Inicializar el recomendador híbrido
+hybrid_recommender = HybridRecommender()
+
+# Configuración del JWT
+SECRET_KEY = "GROF*_*09"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000"
-    ],
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.mount("/rag/static", StaticFiles(directory="./pdf-books"), name="static")
-@app.get("/")
-async def redirect_root_to_docs():
-    return RedirectResponse("/docs")
+class PatientInfo(BaseModel):
+    symptoms: str
+    duration: str
+    allergies: str
+    user_id: Optional[str] = None
 
-pdf_directory = "./pdf-books"
+class PatientConsultation(BaseModel):
+    session_id: Optional[str] = None
+    patient_info: Dict[str, Any]
+    selected_plant: Optional[str] = None
 
-@app.post("/upload")
-async def upload_files(files: list[UploadFile] = File(...)):
-    for file in files:
-        try:
-            file_path = os.path.join(pdf_directory, file.filename)
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Could not save file: {e}")
-    
-    return {"message": "Files uploaded successfully", "filenames": [file.filename for file in files]}
+# Modelo de datos para el feedback
+class FeedbackRequest(BaseModel):
+    session_id: str
+    effectiveness_rating: Optional[int] = None
+    side_effects: Optional[str] = None
+    improvement_time: Optional[str] = None
+    additional_comments: Optional[str] = None
 
-@app.post("/load-and-process-pdfs")
-async def load_and_process_pdfs():
-    try:                
-        subprocess.run(["C:/Users/Fytli/OneDrive/Escritorio/plant_medicator_venv/plant-medicator/arag-data-loader/run_script.bat"], check=True)
+class UserRegistration(BaseModel):
+    fullName: str
+    email: str
+    username: str
+    password: str
+    dni: str
+    phoneNumber: str
+    age: int
+    gender: str
+    weight: float
+    height: float
+    zone: str
+    occupation: Optional[str] = None
+
+class LoginCredentials(BaseModel):
+    identifier: str
+    password: str
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def print_terminal_separator():
+    """Imprime un separador visual en la terminal"""
+    print("\n" + "="*80)
+
+def detect_consultation_state(selected_plant: Optional[str], session_id: Optional[str]) -> tuple[str, str]:
+    """
+    Detecta el estado de la consulta basado en si hay una planta seleccionada
+    """
+    if selected_plant:
+        return "PLANT_SELECTION", "Continuando consulta existente - Preparación detallada"
+    else:
+        return "INITIAL_CONSULTATION", "Nueva consulta iniciada - Análisis y recomendaciones"
+
+def get_previous_recommendations_from_session(session_id: str) -> Dict[str, Any]:
+    """
+    Recupera las recomendaciones previas de una sesión para validar la planta seleccionada
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = psycopg2.connect(
+            dbname="databasePlantMedicator",
+            user="postgres",
+            password="Mascota3",
+            host="localhost"
+        )
+        cursor = conn.cursor()
         
-        return {"message": "PDFs loaded and processed successfully"}
-    except subprocess.CalledProcessError as e:
-        return {"error": "Failed to execute script"}
+        # Buscar recomendaciones previas en la sesión
+        query = """
+        SELECT rna_recommendations, rag_recommendations, selected_system
+        FROM consultations 
+        WHERE session_id = %s 
+        ORDER BY created_at DESC 
+        LIMIT 1
+        """
+        
+        cursor.execute(query, (session_id,))
+        result = cursor.fetchone()
+        
+        if result:
+            return {
+                'rna_recommendations': result[0],
+                'rag_recommendations': result[1], 
+                'selected_system': result[2]
+            }
+        else:
+            return {}
+            
+    except Exception as e:
+        logger.error(f"❌ Error recuperando recomendaciones previas: {str(e)}")
+        return {}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
-# Edit this to add the chain you want to add
-add_routes(app, final_chain, path="/rag")
+def validate_plant_selection(selected_plant: str, session_id: str) -> tuple[bool, str]:
+    """
+    Valida que la planta seleccionada esté en las opciones previas
+    """
+    if not session_id:
+        return False, "Session ID requerido para validación"
+    
+    previous_recs = get_previous_recommendations_from_session(session_id)
+    
+    if not previous_recs:
+        logger.warning(f"⚠️  No se encontraron recomendaciones previas para session: {session_id}")
+        return True, "Validación omitida - no hay recomendaciones previas"
+    
+    # Verificar en recomendaciones RAG (formato texto)
+    rag_recs = previous_recs.get('rag_recommendations', '')
+    if selected_plant.lower() in rag_recs.lower():
+        return True, f"Planta '{selected_plant}' encontrada en recomendaciones RAG previas"
+    
+    # Verificar en recomendaciones RNA (si están disponibles)
+    rna_recs = previous_recs.get('rna_recommendations', '')
+    if selected_plant.lower() in rna_recs.lower():
+        return True, f"Planta '{selected_plant}' encontrada en recomendaciones RNA previas"
+    
+    return False, f"Planta '{selected_plant}' no encontrada en opciones previas"
+
+def print_consultation_header(state: str, session_id: str, selected_plant: Optional[str] = None):
+    """
+    Imprime el encabezado apropiado según el estado de la consulta
+    """
+    print_terminal_separator()
+    
+    if state == "PLANT_SELECTION":
+        print("🔄 CONTINUANDO CONSULTA EXISTENTE")
+        print_terminal_separator()
+        print("=== FASE 6: PREPARACIÓN DETALLADA ===")
+        print(f"📋 Contexto: Continuación de Session ID: {session_id}")
+        print(f"🌱 Usuario seleccionó: {selected_plant}")
+        print("📄 Generando preparación personalizada...")
+    else:
+        print("🌿 NUEVA CONSULTA INICIADA")
+        print_terminal_separator()
+        print("=== FASES 1-5: ANÁLISIS Y RECOMENDACIONES ===")
+        print(f"📋 Session ID: {session_id}")
+        print("🔄 Iniciando evaluación dual RNA + RAG...")
+
+def print_precision_analysis(response: Dict[str, Any]):
+    """Imprime análisis detallado de precisión en la terminal"""
+    print_terminal_separator()
+    print("🧠 ANÁLISIS DE PRECISIÓN DEL SISTEMA")
+    print_terminal_separator()
+    
+    # Información básica
+    print(f"📊 Session ID: {response.get('session_id', 'N/A')}")
+    print(f"🎯 Sistema Elegido: {response.get('selected_system', 'N/A')}")
+    print(f"💡 Razón de Selección: {response.get('selection_reason', 'N/A')}")
+    print()
+    
+    # Precisiones
+    rna_precision = response.get('rna_precision', 0)
+    rag_precision = response.get('rag_precision', 0)
+    
+    print("📈 PRECISIÓN DE SISTEMAS:")
+    print(f"   🤖 RNA (Red Neuronal): {rna_precision:.4f} ({rna_precision*100:.2f}%)")
+    print(f"   📚 RAG (Retrieval-Aug): {rag_precision:.4f} ({rag_precision*100:.2f}%)")
+    print(f"   📊 Diferencia: {abs(rna_precision - rag_precision):.4f}")
+    
+    # Determinar ganador
+    if rna_precision > rag_precision:
+        winner = "RNA"
+        margin = rna_precision - rag_precision
+    elif rag_precision > rna_precision:
+        winner = "RAG"
+        margin = rag_precision - rna_precision
+    else:
+        winner = "EMPATE"
+        margin = 0
+    
+    print(f"   🏆 Ganador: {winner}" + (f" (margen: {margin:.4f})" if margin > 0 else ""))
+    print()
+    
+    # Recomendaciones RNA
+    rna_recs = response.get('rna_recommendations', [])
+    if rna_recs:
+        print("🤖 RECOMENDACIONES RNA:")
+        for i, plant in enumerate(rna_recs, 1):
+            print(f"   {i}. {plant.get('name', 'N/A')} ({plant.get('scientific_name', 'N/A')})")
+            print(f"      Confianza: {plant.get('confidence', 0):.3f}")
+    
+    print()
+    
+    # Recomendaciones RAG
+    rag_recs = response.get('rag_recommendations', '')
+    if rag_recs:
+        print("📚 RECOMENDACIONES RAG:")
+        # Mostrar solo las primeras líneas para no saturar
+        rag_lines = rag_recs.split('\n')[:3]
+        for line in rag_lines:
+            if line.strip():
+                print(f"   {line.strip()}")
+        if len(rag_lines) > 3:
+            print("   ...")
+    
+    print_terminal_separator()
+
+def print_detailed_preparation_summary(selected_plant: str, response: Dict[str, Any], session_id: str):
+    """
+    Imprime resumen de la preparación detallada generada
+    """
+    print_terminal_separator()
+    print("💊 PREPARACIÓN DETALLADA COMPLETADA")
+    print_terminal_separator()
+    print(f"🌱 Planta seleccionada: {selected_plant.title()}")
+    print(f"📋 Session ID: {session_id}")
+    print(f"📄 Método utilizado: RAG (Preparación detallada)")
+    print(f"📝 Longitud de respuesta: {len(response.get('answer', ''))} caracteres")
+    print(f"✅ Estado: Preparación generada exitosamente")
+    print()
+    print("📋 Contenido incluye:")
+    print("   • Nombre científico y propiedades")
+    print("   • Parte de la planta a utilizar")  
+    print("   • Forma de preparación detallada")
+    print("   • Dosis y frecuencia recomendada")
+    print("   • Duración del tratamiento")
+    print("   • Precauciones y efectos secundarios")
+    print_terminal_separator()
+
+async def get_user_data_from_db(username: str) -> Optional[Dict[str, Any]]:
+    """
+    Recupera los datos del usuario desde la base de datos usando el username
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = psycopg2.connect(
+            dbname="databasePlantMedicator",
+            user="postgres",
+            password="Mascota3",
+            host="localhost"
+        )
+        cursor = conn.cursor()
+        
+        # Consulta para obtener datos del usuario
+        query = """
+        SELECT full_name, email, username, dni, phone_number, age, gender, 
+               weight, height, zone, occupation, education_level
+        FROM personal_information 
+        WHERE username = %s
+        """
+        
+        cursor.execute(query, (username,))
+        result = cursor.fetchone()
+        
+        if result:
+            # Mapear resultado a diccionario
+            user_data = {
+                'full_name': result[0],
+                'email': result[1],
+                'username': result[2],
+                'dni': result[3],
+                'phone_number': result[4],
+                'age': result[5],
+                'gender': result[6],
+                'weight': result[7],
+                'height': result[8],
+                'zone': result[9],
+                'occupation': result[10],
+                'education_level': result[11]
+            }
+            logger.info(f"📋 Datos del usuario {username} recuperados exitosamente")
+            return user_data
+        else:
+            logger.warning(f"⚠️  Usuario {username} no encontrado en la base de datos")
+            return None
+            
+    except Exception as e:
+        logger.error(f"❌ Error consultando datos del usuario {username}: {str(e)}")
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+@app.post("/rag/chat")
+async def chat_endpoint(consultation: PatientConsultation):
+    try:
+        # DETECTAR ESTADO DE LA CONSULTA
+        consultation_state, state_description = detect_consultation_state(
+            consultation.selected_plant, 
+            consultation.session_id
+        )
+        
+        # IMPRIMIR ENCABEZADO APROPIADO
+        print_consultation_header(
+            consultation_state, 
+            consultation.session_id, 
+            consultation.selected_plant
+        )
+        
+        # LOGGING CONTEXTUAL
+        logger.info(f"📥 Session ID: {consultation.session_id}")
+        logger.info(f"🔄 Estado: {consultation_state}")
+        logger.info(f"👤 User ID: {consultation.patient_info.get('user_id', 'N/A')}")
+        logger.info(f"🩺 Síntomas: {consultation.patient_info.get('symptoms', 'N/A')}")
+        
+        if consultation_state == "PLANT_SELECTION":
+            logger.info(f"🌱 Planta seleccionada: {consultation.selected_plant}")
+            
+            # VALIDAR PLANTA SELECCIONADA
+            is_valid, validation_msg = validate_plant_selection(
+                consultation.selected_plant, 
+                consultation.session_id
+            )
+            
+            if not is_valid:
+                logger.error(f"❌ Validación falló: {validation_msg}")
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Planta inválida: {validation_msg}"
+                )
+            else:
+                logger.info(f"✅ Validación exitosa: {validation_msg}")
+        else:
+            logger.info("🔍 Iniciando análisis dual RNA + RAG")
+        
+        # Recuperar información del usuario desde la base de datos
+        user_id = consultation.patient_info.get('user_id')
+        if user_id:
+            user_data = await get_user_data_from_db(user_id)
+            if user_data:
+                # Actualizar patient_info con datos reales del usuario
+                consultation.patient_info.update({
+                    'age': user_data.get('age', 30),
+                    'gender': user_data.get('gender', 'Not specified'),
+                    'zone': user_data.get('zone', 'Lima'),
+                    'weight': user_data.get('weight'),
+                    'height': user_data.get('height'),
+                    'full_name': user_data.get('full_name'),
+                    'phone_number': user_data.get('phone_number')
+                })
+                logger.info(f"✅ Datos del usuario recuperados: Edad: {user_data.get('age')}, Género: {user_data.get('gender')}, Zona: {user_data.get('zone')}")
+            else:
+                logger.warning(f"⚠️  No se encontraron datos para el usuario: {user_id}")
+                # Solo asignar defaults si no se encontró el usuario
+                consultation.patient_info.setdefault('age', 30)
+                consultation.patient_info.setdefault('gender', 'Not specified')
+                consultation.patient_info.setdefault('zone', 'Lima')
+        else:
+            logger.warning("⚠️  No se proporcionó user_id, usando valores por defecto")
+            # Solo asignar defaults si no hay user_id
+            consultation.patient_info.setdefault('age', 30)
+            consultation.patient_info.setdefault('gender', 'Not specified')
+            consultation.patient_info.setdefault('zone', 'Lima')
+        
+        # Si hay una session_id, asegurarse de que esté incluida en patient_info
+        if consultation.session_id:
+            consultation.patient_info['session_id'] = consultation.session_id
+        
+        print("\n🔄 INICIANDO PROCESAMIENTO...")
+        
+        # Llamar directamente a process_consultation_with_safety con la planta seleccionada
+        response = await process_consultation_with_safety(
+            patient_info=consultation.patient_info,
+            selected_plant=consultation.selected_plant
+        )
+        
+        if "error" in response:
+            logger.error(f"❌ Error en process_consultation_with_safety: {response['error']}")
+            raise HTTPException(status_code=500, detail=response["error"])
+        
+        # Asegurarse de que la respuesta contiene todos los campos necesarios
+        if "answer" not in response and "rag_answer" in response:
+            response["answer"] = response["rag_answer"]
+        
+        # MOSTRAR ANÁLISIS SEGÚN EL ESTADO
+        if consultation_state == "INITIAL_CONSULTATION":
+            # Mostrar análisis de precisión para nuevas consultas
+            print_precision_analysis(response)
+        else:
+            # Mostrar resumen de preparación detallada
+            print_detailed_preparation_summary(
+                consultation.selected_plant, 
+                response, 
+                consultation.session_id
+            )
+        
+        logger.info("✅ CONSULTA PROCESADA EXITOSAMENTE")
+        return response
+        
+    except HTTPException as e:
+        logger.error(f"❌ HTTPException: {e.detail}")
+        print_terminal_separator()
+        print(f"❌ ERROR HTTP: {e.detail}")
+        print_terminal_separator()
+        raise e
+    except Exception as e:
+        logger.error(f"❌ Error inesperado: {str(e)}")
+        print_terminal_separator()
+        print(f"❌ ERROR INESPERADO: {str(e)}")
+        print_terminal_separator()
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/feedback")
+async def save_feedback(feedback: FeedbackRequest):
+    try:
+        print_terminal_separator()
+        print("📝 GUARDANDO FEEDBACK")
+        print_terminal_separator()
+        
+        # Validar que session_id es un UUID válido
+        try:
+            session_uuid = uuid.UUID(feedback.session_id)
+            logger.info(f"📋 Session ID válido: {session_uuid}")
+        except ValueError:
+            logger.error(f"❌ Session ID inválido: {feedback.session_id}")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid session_id format"
+            )
+        
+        conn = psycopg2.connect(
+            dbname="databasePlantMedicator",
+            user="postgres",
+            password="Mascota3",
+            host="localhost"
+        )
+        cursor = conn.cursor()
+        
+        # Modificar la consulta para usar UUID
+        cursor.execute(
+            """
+            SELECT id FROM treatment_feedback 
+            WHERE CAST(session_id AS VARCHAR) = %s
+            """,
+            (str(session_uuid),)
+        )
+        existing_feedback = cursor.fetchone()
+        
+        if existing_feedback:
+            logger.info("🔄 Actualizando feedback existente")
+            update_query = """
+            UPDATE treatment_feedback 
+            SET effectiveness_rating = %s,
+                side_effects = %s,
+                improvement_time = %s,
+                additional_comments = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE CAST(session_id AS VARCHAR) = %s
+            """
+            cursor.execute(update_query, (
+                feedback.effectiveness_rating,
+                feedback.side_effects,
+                feedback.improvement_time,
+                feedback.additional_comments,
+                str(session_uuid)
+            ))
+        else:
+            logger.info("➕ Creando nuevo feedback")
+            insert_query = """
+            INSERT INTO treatment_feedback 
+                (session_id, effectiveness_rating, side_effects, improvement_time, 
+                 additional_comments, created_at)
+            VALUES 
+                (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            """
+            cursor.execute(insert_query, (
+                str(session_uuid),
+                feedback.effectiveness_rating,
+                feedback.side_effects,
+                feedback.improvement_time,
+                feedback.additional_comments
+            ))
+        
+        conn.commit()
+        logger.info("✅ Feedback guardado correctamente")
+        
+        print_terminal_separator()
+        print("✅ FEEDBACK GUARDADO EXITOSAMENTE")
+        print_terminal_separator()
+        
+        return {
+            "status": "success",
+            "message": "Feedback guardado correctamente",
+            "session_id": str(session_uuid)
+        }
+    except HTTPException as e:
+        logger.error(f"❌ Error HTTP en feedback: {e.detail}")
+        raise e
+    except Exception as e:
+        logger.error(f"❌ Error guardando feedback: {str(e)}")
+        print(f"❌ Error saving feedback: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al guardar el feedback: {str(e)}"
+        )
+    finally:
+        if 'conn' in locals() and conn is not None:
+            if 'cursor' in locals() and cursor is not None:
+                cursor.close()
+            conn.close()
+
+@app.post("/api/register")
+async def register_user(user: UserRegistration):
+    try:
+        print_terminal_separator()
+        print("👤 REGISTRO DE NUEVO USUARIO")
+        print_terminal_separator()
+        
+        connection = psycopg2.connect(
+            host="localhost",
+            user="postgres",
+            password="Mascota3",
+            dbname="databasePlantMedicator"
+        )
+        cursor = connection.cursor()
+        
+        logger.info(f"📝 Registrando usuario: {user.username} ({user.email})")
+        
+        # Verificaciones de usuario existente
+        cursor.execute("SELECT username FROM personal_information WHERE username = %s", (user.username,))
+        if cursor.fetchone():
+            logger.warning(f"⚠️  Username ya existe: {user.username}")
+            raise HTTPException(status_code=400, detail="El nombre de usuario ya está en uso")
+            
+        cursor.execute("SELECT email FROM personal_information WHERE email = %s", (user.email,))
+        if cursor.fetchone():
+            logger.warning(f"⚠️  Email ya existe: {user.email}")
+            raise HTTPException(status_code=400, detail="El correo electrónico ya está registrado")
+            
+        cursor.execute("SELECT dni FROM personal_information WHERE dni = %s", (user.dni,))
+        if cursor.fetchone():
+            logger.warning(f"⚠️  DNI ya existe: {user.dni}")
+            raise HTTPException(status_code=400, detail="El DNI ya está registrado")
+            
+        cursor.execute("SELECT phone_number FROM personal_information WHERE phone_number = %s", (user.phoneNumber,))
+        if cursor.fetchone():
+            logger.warning(f"⚠️  Teléfono ya existe: {user.phoneNumber}")
+            raise HTTPException(status_code=400, detail="El número de teléfono ya está registrado")
+
+        # Use bcrypt directly for password hashing
+        password_bytes = user.password.encode('utf-8')
+        salt = bcrypt.gensalt()
+        hashed_password = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
+
+        INSERT_USER = """
+        INSERT INTO personal_information (
+            full_name, email, username, password_hash, dni, phone_number,
+            age, gender, weight, height, zone, education_level,
+            occupation, created_at, last_login
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+        )
+        """
+
+        cursor.execute(INSERT_USER, (
+            user.fullName,
+            user.email,
+            user.username,
+            hashed_password,
+            user.dni,
+            user.phoneNumber,
+            user.age,
+            user.gender,
+            user.weight,
+            user.height,
+            user.zone,
+            user.occupation,
+            'No especificada',
+            datetime.now(),
+            None
+        ))
+
+        connection.commit()
+        logger.info(f"✅ Usuario registrado exitosamente: {user.username}")
+        
+        print_terminal_separator()
+        print(f"✅ USUARIO REGISTRADO: {user.username}")
+        print_terminal_separator()
+        
+        return {"message": "Usuario registrado exitosamente"}
+
+    except HTTPException as e:
+        logger.error(f"❌ Error en registro: {e.detail}")
+        raise e
+    except Exception as e:
+        logger.error(f"❌ Error registrando usuario: {str(e)}")
+        print(f"❌ Error registering user: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error al registrar usuario: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+@app.post("/api/login")
+async def login(credentials: LoginCredentials):
+    try:
+        print_terminal_separator()
+        print("🔐 INTENTO DE LOGIN")
+        print_terminal_separator()
+        
+        connection = psycopg2.connect(
+            host="localhost",
+            user="postgres",
+            password="Mascota3",
+            dbname="databasePlantMedicator"
+        )
+        cursor = connection.cursor()
+
+        logger.info(f"👤 Intento de login para: {credentials.identifier}")
+
+        cursor.execute(
+            "SELECT username, password_hash FROM personal_information WHERE username = %s",
+            (credentials.identifier,)
+        )
+        user = cursor.fetchone()
+
+        if not user:
+            logger.warning(f"⚠️  Usuario no encontrado: {credentials.identifier}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Usuario o contraseña incorrectos"
+            )
+
+        username, stored_hash = user
+
+        # Check if password matches using bcrypt
+        password_bytes = credentials.password.encode('utf-8')
+        stored_hash_bytes = stored_hash.encode('utf-8')
+        
+        # Check if password matches
+        if not bcrypt.checkpw(password_bytes, stored_hash_bytes):
+            logger.warning(f"⚠️  Contraseña incorrecta para: {credentials.identifier}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Usuario o contraseña incorrectos"
+            )
+
+        cursor.execute(
+            "UPDATE personal_information SET last_login = %s WHERE username = %s",
+            (datetime.now(), username)
+        )
+        connection.commit()
+
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": username}, expires_delta=access_token_expires
+        )
+
+        logger.info(f"✅ Login exitoso para: {username}")
+        
+        print_terminal_separator()
+        print(f"✅ LOGIN EXITOSO: {username}")
+        print_terminal_separator()
+
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "username": username
+        }
+
+    except HTTPException as e:
+        logger.error(f"❌ Error en login: {e.detail}")
+        raise e
+    except Exception as e:
+        logger.error(f"❌ Error inesperado en login: {str(e)}")
+        print(f"❌ Error in login: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error en el servidor: {str(e)}"
+        )
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+def run():
+    import uvicorn
+    print_terminal_separator()
+    print("🚀 INICIANDO SERVIDOR PlantMedicator")
+    print("🌿 Sistema de Recomendación de Plantas Medicinales")
+    print("📊 Con análisis dual RNA + RAG")
+    print_terminal_separator()
+    uvicorn.run("app.server:app", host="0.0.0.0", port=8000, reload=True)
 
 if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    run()
