@@ -2,6 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import RoleVerifier from './RoleVerifier';
 
+// Configuración de URLs según el entorno
+const getApiUrl = () => {
+  // Si estamos en desarrollo (localhost)
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'http://localhost:8000';
+  }
+  // Si estamos en producción, usar la URL de tu backend en Render
+  // Reemplaza 'your-backend-app-name' con el nombre real de tu app en Render
+  return 'https://your-backend-app-name.onrender.com';
+};
+
+const API_BASE_URL = getApiUrl();
 
 // Define la interfaz para la planta recomendada
 interface PlantaRecomendada {
@@ -38,7 +50,7 @@ const AdminDashboard = () => {
     
     const verifyUserRole = async (username: string, authToken: string) => {
         try {
-            const response = await fetch(`http://localhost:8000/api/verify-user-role?username=${username}`, {
+            const response = await fetch(`${API_BASE_URL}/api/verify-user-role?username=${username}`, {
                 headers: {
                     'Authorization': `Bearer ${authToken}`
                 }
@@ -75,7 +87,7 @@ const AdminDashboard = () => {
                 
                 // Verificar el rol en la base de datos
                 try {
-                    const response = await fetch(`http://localhost:8000/api/verify-user-role?username=${authData.user.username}`, {
+                    const response = await fetch(`${API_BASE_URL}/api/verify-user-role?username=${authData.user.username}`, {
                         headers: {
                             'Authorization': `Bearer ${authData.token}`  // Usa authData.token en lugar de access_token
                         }
@@ -163,7 +175,7 @@ const AdminDashboard = () => {
         }
     }, [navigate]);
 
-    const [logs, setLogs] = useState<string[]>(['Iniciando aplicación...']);
+    const [logs, setLogs] = useState<string[]>([`Iniciando aplicación... (Entorno: ${API_BASE_URL})`]);
     const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
@@ -287,6 +299,7 @@ const AdminDashboard = () => {
 
     const fetchRecommendation = async () => {
         addLog("Inicio de fetchRecommendation");
+        addLog(`Usando API URL: ${API_BASE_URL}`);
         setIsLoading(true);
         setError(null);
         
@@ -312,11 +325,11 @@ const AdminDashboard = () => {
             
             addLog(`Enviando solicitud con datos: ${JSON.stringify(requestData)}`);
 
-            // Realizar la petición fetch con un timeout
+            // Realizar la petición fetch con un timeout más largo para producción
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 segundos timeout
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout para producción
             
-            const response = await fetch('http://localhost:8000/rag/chat', {
+            const response = await fetch(`${API_BASE_URL}/rag/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -428,7 +441,7 @@ const AdminDashboard = () => {
         } catch (error: any) {
             console.error("Error completo:", error);
             if (error.name === 'AbortError') {
-                addLog('La solicitud ha excedido el tiempo de espera (15 segundos)');
+                addLog('La solicitud ha excedido el tiempo de espera (30 segundos)');
                 setError('Tiempo de espera agotado. Verifica que el servidor esté funcionando.');
             } else {
                 addLog(`Error: ${error.message}`);
@@ -453,6 +466,14 @@ const AdminDashboard = () => {
     return (
         <div className="p-6 bg-gray-100 min-h-screen">
             <h1 className="text-2xl font-bold mb-6">Panel de Administración</h1>
+            
+            {/* Mostrar información del entorno */}
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+                <p className="text-sm text-blue-800">
+                    <strong>Entorno:</strong> {window.location.hostname === 'localhost' ? 'Desarrollo' : 'Producción'} 
+                    | <strong>API:</strong> {API_BASE_URL}
+                </p>
+            </div>
             
             {isVerifying ? (
                 <div className="p-4 bg-blue-50 rounded-lg mb-4">

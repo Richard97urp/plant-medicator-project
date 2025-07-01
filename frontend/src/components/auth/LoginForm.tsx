@@ -6,6 +6,16 @@ interface LoginFormProps {
     onLoginSuccess: (username: string) => void;
 }
 
+// Configuración de la API URL basada en el entorno
+const getApiUrl = () => {
+    // En desarrollo usa la variable de entorno o localhost por defecto
+    if (process.env.NODE_ENV === 'development') {
+        return process.env.REACT_APP_API_URL || 'http://localhost:8000';
+    }
+    // En producción usa la variable de entorno
+    return process.env.REACT_APP_API_URL || 'https://tu-backend.onrender.com';
+};
+
 export const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
     const [credentials, setCredentials] = useState<LoginCredentials>({
         identifier: '',
@@ -21,7 +31,8 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
         setIsLoading(true);
 
         try {
-            const response = await fetch('http://localhost:8000/api/login', {
+            const apiUrl = getApiUrl();
+            const response = await fetch(`${apiUrl}/api/login`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -52,6 +63,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
                 onLoginSuccess(userInfo.username);
             }
         } catch (error) {
+            console.error('Error en login:', error);
             setError(error instanceof Error ? 
                 error.message : 
                 'Usuario o contraseña incorrectos');
@@ -81,6 +93,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
                         value={credentials.identifier}
                         onChange={(e) => setCredentials({...credentials, identifier: e.target.value})}
                         disabled={isLoading}
+                        required
                     />
                 </div>
 
@@ -95,6 +108,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
                             value={credentials.password}
                             onChange={(e) => setCredentials({...credentials, password: e.target.value})}
                             disabled={isLoading}
+                            required
                         />
                         <button
                             type="button"
@@ -111,7 +125,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
                     className={`w-full bg-green-600 text-white p-2 rounded hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 ${
                         isLoading ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
-                    disabled={isLoading}
+                    disabled={isLoading || !credentials.identifier || !credentials.password}
                 >
                     {isLoading ? 'Ingresando...' : 'Ingresar'}
                 </button>

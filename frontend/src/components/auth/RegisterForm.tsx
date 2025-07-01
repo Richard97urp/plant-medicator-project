@@ -51,6 +51,11 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
 
+  // URL del API - Se configura automáticamente según el entorno
+  const API_BASE_URL = process.env.NODE_ENV === 'production' 
+    ? process.env.REACT_APP_API_URL || 'https://*.com'
+    : process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
   const occupationOptions = [
     "Sin nivel educativo/sin instrucción",
     "Preescolar",
@@ -70,7 +75,11 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
     
     if (successMessage) {
       timeoutId = setTimeout(() => {
-        navigate('/login');
+        if (onRegisterSuccess) {
+          onRegisterSuccess();
+        } else {
+          navigate('/login');
+        }
       }, 2000);
     }
   
@@ -79,7 +88,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
         clearTimeout(timeoutId);
       }
     };
-  }, [successMessage, navigate]);
+  }, [successMessage, navigate, onRegisterSuccess]);
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const { key, currentTarget } = e;
@@ -92,7 +101,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
     }
     
     if (name === 'dni' || name === 'phoneNumber' || name === 'height') {
-      if (!/[0-9]/.test(key) && key !== 'Backspace' && key !== 'Delete' && key !== 'ArrowLeft' && key !== 'ArrowRight') {
+      if (!/[0-9]/.test(key) && key !== 'Backspace' && key !== 'Delete' && key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Tab') {
         e.preventDefault();
       }
     }
@@ -261,7 +270,9 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
     setIsSubmitting(true);
 
     try {
-      const response = await fetch('http://localhost:8000/api/register', {
+      console.log('Enviando a:', `${API_BASE_URL}/api/register`);
+      
+      const response = await fetch(`${API_BASE_URL}/api/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

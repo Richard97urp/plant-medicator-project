@@ -489,10 +489,11 @@ async def save_consultation(
     cursor = None
     try:
         conn = psycopg2.connect(
-            dbname="databasePlantMedicator",
-            user="postgres",
-            password="Mascota3",
-            host="localhost"
+            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"), 
+            user=os.getenv("DB_USER"),            
+            password=os.getenv("DB_PASSWORD"),    
+            host=os.getenv("DB_HOST"),            
+            port=os.getenv("DB_PORT", "5432")         
         )
         register_uuid()
         cursor = conn.cursor()
@@ -868,13 +869,14 @@ def register_uuid():
     psycopg2.extras.register_uuid()
 
 # Configuración de la base de datos
+"""
 db_config = {
     'dbname': 'databasePlantMedicator',
     'user': 'postgres',
     'password': 'Mascota3',
     'host': 'localhost'
 }
-
+"""
 # Inicialización del recomendador híbrido y cliente OpenAI
 try:
     from hybrid_recommender import HybridRecommender

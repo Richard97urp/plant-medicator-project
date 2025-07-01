@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: plantmedicator-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements-prod.txt
+    startCommand: python -m uvicorn app.server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENV
+        value: production
+      - key: SECRET_KEY
+        value: GROF*_*09

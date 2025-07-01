@@ -39,6 +39,6 @@ PGVector.from_documents(
     documents=chunks,
     embedding=embeddings,
     collection_name="collection164",
-    connection_string="postgresql+psycopg://postgres:Mascota3@localhost:5432/databasePlantMedicator",
+    connection_string=f"postgresql+psycopg://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}",
     pre_delete_collection=True,
 )

@@ -88,11 +88,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+CORS_ORIGINS = [
+    "http://localhost:3000",  # Para desarrollo local
+    #"https://tu-app-frontend.vercel.app",  # Cambia por tu dominio real
+    "https://*.vercel.app",  # Para previews de Vercel
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -164,10 +170,11 @@ def get_previous_recommendations_from_session(session_id: str) -> Dict[str, Any]
     cursor = None
     try:
         conn = psycopg2.connect(
-            dbname="databasePlantMedicator",
-            user="postgres",
-            password="Mascota3",
-            host="localhost"
+            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"), 
+            user=os.getenv("DB_USER"),            
+            password=os.getenv("DB_PASSWORD"),    
+            host=os.getenv("DB_HOST"),            
+            port=os.getenv("DB_PORT", "5432")           
         )
         cursor = conn.cursor()
         
@@ -335,10 +342,11 @@ async def get_user_data_from_db(username: str) -> Optional[Dict[str, Any]]:
     cursor = None
     try:
         conn = psycopg2.connect(
-            dbname="databasePlantMedicator",
-            user="postgres",
-            password="Mascota3",
-            host="localhost"
+            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),            
+            password=os.getenv("DB_PASSWORD"),    
+            host=os.getenv("DB_HOST"),            
+            port=os.getenv("DB_PORT", "5432")          
         )
         cursor = conn.cursor()
         
@@ -524,10 +532,11 @@ async def save_feedback(feedback: FeedbackRequest):
             )
         
         conn = psycopg2.connect(
-            dbname="databasePlantMedicator",
-            user="postgres",
-            password="Mascota3",
-            host="localhost"
+            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),            
+            password=os.getenv("DB_PASSWORD"),    
+            host=os.getenv("DB_HOST"),            
+            port=os.getenv("DB_PORT", "5432")        
         )
         cursor = conn.cursor()
         
@@ -612,10 +621,11 @@ async def register_user(user: UserRegistration):
         print_terminal_separator()
         
         connection = psycopg2.connect(
-            host="localhost",
-            user="postgres",
-            password="Mascota3",
-            dbname="databasePlantMedicator"
+            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"),  
+            user=os.getenv("DB_USER"),            
+            password=os.getenv("DB_PASSWORD"),    
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT", "5432")          
         )
         cursor = connection.cursor()
         
@@ -706,10 +716,11 @@ async def login(credentials: LoginCredentials):
         print_terminal_separator()
         
         connection = psycopg2.connect(
-            host="localhost",
-            user="postgres",
-            password="Mascota3",
-            dbname="databasePlantMedicator"
+            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"), 
+            user=os.getenv("DB_USER"),            
+            password=os.getenv("DB_PASSWORD"),    
+            host=os.getenv("DB_HOST"),            
+            port=os.getenv("DB_PORT", "5432")           
         )
         cursor = connection.cursor()
 
@@ -789,7 +800,10 @@ def run():
     print("🌿 Sistema de Recomendación de Plantas Medicinales")
     print("📊 Con análisis dual RNA + RAG")
     print_terminal_separator()
-    uvicorn.run("app.server:app", host="0.0.0.0", port=8000, reload=True)
+
+    # Para Render: usar puerto dinámico
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("app.server:app", host="0.0.0.0", port=port, reload=True)
 
 if __name__ == "__main__":
     run()

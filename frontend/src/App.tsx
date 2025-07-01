@@ -24,6 +24,9 @@ interface FeedbackData {
   additionalComments: string;
 }
 
+// Configuración de la API URL
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
 // Actualizar el objeto QUESTIONS removiendo AGE
 const QUESTIONS = {
   SYMPTOMS: '¿Cuáles son tus síntomas principales?',
@@ -128,7 +131,7 @@ const saveFeedback = async (feedbackData: FeedbackData) => {
       ...feedbackData
     });
 
-    const response = await fetch('http://localhost:8000/feedback', {
+    const response = await fetch(`${API_BASE_URL}/feedback`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -214,7 +217,7 @@ const saveFeedback = async (feedbackData: FeedbackData) => {
   
       console.log('Sending request with body:', requestBody);
   
-      const response = await fetch('http://localhost:8000/rag/chat', {
+      const response = await fetch(`${API_BASE_URL}/rag/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -377,7 +380,7 @@ const saveFeedback = async (feedbackData: FeedbackData) => {
   
       // Si hay datos, verificar si el token es válido
       // (Aquí debes implementar una llamada a tu backend para validar el token)
-      fetch('http://localhost:8000/api/validate-token', {
+      fetch(`${API_BASE_URL}/api/validate-token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
