@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
@@ -11,6 +11,8 @@ import importlib.util
 import sys
 import os
 import logging
+from fastapi.responses import HTMLResponse
+from fastapi.security import OAuth2PasswordBearer
 
 
 # Configurar logging más detallado
@@ -81,6 +83,8 @@ SECRET_KEY = "GROF*_*09"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -88,15 +92,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-CORS_ORIGINS = [
+# Configurar CORS
+origins = [
     "http://localhost:3000",  # Para desarrollo local
-    #"https://tu-app-frontend.vercel.app",  # Cambia por tu dominio real
-    "https://*.vercel.app",  # Para previews de Vercel
+    "http://localhost:3001",  # Para desarrollo local alternativo
+    "https://plant-medicator-project.vercel.app",  # Tu dominio de Vercel
+    "https://plant-medicator-project-pvin1pbxd-richard97chzs-projects.vercel.app",  # Tu dominio de deployment
+    "https://*.vercel.app",  # Permitir todos los subdominios de Vercel
 ]
+
+# Si estás en producción, agregar dinámicamente los dominios de Vercel
+if os.getenv("NODE_ENV") == "production":
+    # Agregar dominios de preview de Vercel
+    origins.extend([
+        "https://plant-medicator-project-git-main-richard97chzs-projects.vercel.app",
+        # Puedes agregar más dominios aquí según sea necesario
+    ])
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=origins,  # Usar 'origins' en lugar de 'CORS_ORIGINS'
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -391,10 +406,33 @@ async def get_user_data_from_db(username: str) -> Optional[Dict[str, Any]]:
             cursor.close()
         if conn:
             conn.close()
-
-@app.post("/rag/chat")
-async def chat_endpoint(consultation: PatientConsultation):
+            
+async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return username
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+            
+@app.post("/rag/chat")
+async def chat_endpoint(
+    consultation: PatientConsultation,
+    current_user: str = Depends(get_current_user)
+):
+    try:
+        # Asegurarse de que el user_id en patient_info coincida con el usuario autenticado
+        consultation.patient_info['user_id'] = current_user
         # DETECTAR ESTADO DE LA CONSULTA
         consultation_state, state_description = detect_consultation_state(
             consultation.selected_plant, 
@@ -512,7 +550,6 @@ async def chat_endpoint(consultation: PatientConsultation):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/feedback")
 async def save_feedback(feedback: FeedbackRequest):
     try:
@@ -615,18 +652,14 @@ async def save_feedback(feedback: FeedbackRequest):
 
 @app.post("/api/register")
 async def register_user(user: UserRegistration):
+    connection = None
+    cursor = None
     try:
         print_terminal_separator()
         print("👤 REGISTRO DE NUEVO USUARIO")
         print_terminal_separator()
         
-        connection = psycopg2.connect(
-            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"),  
-            user=os.getenv("DB_USER"),            
-            password=os.getenv("DB_PASSWORD"),    
-            host=os.getenv("DB_HOST"),
-            port=os.getenv("DB_PORT", "5432")          
-        )
+        connection = get_db_connection()
         cursor = connection.cursor()
         
         logger.info(f"📝 Registrando usuario: {user.username} ({user.email})")
@@ -652,7 +685,7 @@ async def register_user(user: UserRegistration):
             logger.warning(f"⚠️  Teléfono ya existe: {user.phoneNumber}")
             raise HTTPException(status_code=400, detail="El número de teléfono ya está registrado")
 
-        # Use bcrypt directly for password hashing
+        # Hash de la contraseña
         password_bytes = user.password.encode('utf-8')
         salt = bcrypt.gensalt()
         hashed_password = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
@@ -679,7 +712,7 @@ async def register_user(user: UserRegistration):
             user.weight,
             user.height,
             user.zone,
-            user.occupation,
+            user.occupation or 'No especificada',
             'No especificada',
             datetime.now(),
             None
@@ -703,25 +736,21 @@ async def register_user(user: UserRegistration):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error al registrar usuario: {str(e)}")
     finally:
-        if cursor:
+        if cursor is not None:
             cursor.close()
-        if connection:
+        if connection is not None:
             connection.close()
 
 @app.post("/api/login")
 async def login(credentials: LoginCredentials):
+    connection = None
+    cursor = None
     try:
         print_terminal_separator()
         print("🔐 INTENTO DE LOGIN")
         print_terminal_separator()
         
-        connection = psycopg2.connect(
-            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"), 
-            user=os.getenv("DB_USER"),            
-            password=os.getenv("DB_PASSWORD"),    
-            host=os.getenv("DB_HOST"),            
-            port=os.getenv("DB_PORT", "5432")           
-        )
+        connection = get_db_connection()
         cursor = connection.cursor()
 
         logger.info(f"👤 Intento de login para: {credentials.identifier}")
@@ -788,10 +817,169 @@ async def login(credentials: LoginCredentials):
             detail=f"Error en el servidor: {str(e)}"
         )
     finally:
-        if cursor:
+        if cursor is not None:
             cursor.close()
+        if connection is not None:
+            connection.close()
+
+# Agregar este endpoint para verificar el estado del servidor
+@app.get("/health")
+async def health_check():
+    """
+    Endpoint para verificar el estado del servidor y la base de datos
+    """
+    try:
+        # Probar conexión a la base de datos
+        connection = None
+        try:
+            connection = get_db_connection()
+            cursor = connection.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            
+            return {
+                "status": "healthy",
+                "database": "connected",
+                "message": "Server and database are running correctly"
+            }
+        except Exception as db_error:
+            logger.error(f"Database connection error: {db_error}")
+            return {
+                "status": "healthy",
+                "database": "disconnected",
+                "message": "Server is running but database connection failed",
+                "error": str(db_error)
+            }, 200
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }, 503
+    finally:
         if connection:
             connection.close()
+
+def get_db_connection():
+    """Establece conexión con la base de datos PostgreSQL"""
+    try:
+        database_url = os.getenv("DATABASE_URL")
+        
+        if database_url:
+            # Render usa URLs en formato postgres:// que psycopg2 no soporta directamente
+            if database_url.startswith("postgres://"):
+                database_url = database_url.replace("postgres://", "postgresql://", 1)
+            
+            # Parsear la URL para extraer los componentes
+            import urllib.parse
+            parsed = urllib.parse.urlparse(database_url)
+            
+            # Extraer componentes de la URL
+            return psycopg2.connect(
+                host=parsed.hostname,
+                port=parsed.port or 5432,
+                user=parsed.username,
+                password=parsed.password,
+                database=parsed.path.lstrip('/')  # Remover el '/' inicial
+            )
+        
+        # Fallback para desarrollo local
+        return psycopg2.connect(
+            dbname=os.getenv("DB_NAME", "postgres"),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", ""),
+            host=os.getenv("DB_HOST", "localhost"),
+            port=os.getenv("DB_PORT", "5432")
+        )
+    except Exception as e:
+        logger.error(f"❌ Error conectando a la base de datos: {str(e)}")
+        logger.error(f"DATABASE_URL: {os.getenv('DATABASE_URL')}")
+        raise
+        
+# Endpoint para verificar variables de entorno (útil para debugging)
+@app.get("/debug/env")
+async def debug_env():
+    """
+    Endpoint para verificar las variables de entorno (solo para debugging)
+    """
+    return {
+        "DB_HOST": os.getenv("DB_HOST"),
+        "DB_NAME": os.getenv("DB_NAME"),
+        "DB_USER": os.getenv("DB_USER"),
+        "DB_PORT": os.getenv("DB_PORT"),
+        "NODE_ENV": os.getenv("NODE_ENV"),
+        "PORT": os.getenv("PORT"),
+        "DATABASE_URL_SET": bool(os.getenv("DATABASE_URL")),
+        # No mostrar valores sensibles como passwords
+    }
+
+@app.get("/", response_class=HTMLResponse)
+async def welcome_page():
+    """
+    Página de bienvenida HTML para el servidor
+    """
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>PlantMedicator API</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+            .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #2c5530; text-align: center; }
+            .status { background: #d4edda; color: #155724; padding: 10px; border-radius: 5px; margin: 20px 0; }
+            .endpoint { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #007bff; }
+            .tech { display: inline-block; background: #e9ecef; padding: 5px 10px; margin: 5px; border-radius: 15px; font-size: 12px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🌿 PlantMedicator API</h1>
+            <div class="status">
+                ✅ Servidor en línea y funcionando correctamente
+            </div>
+            
+            <h2>📋 Endpoints Disponibles</h2>
+            <div class="endpoint">
+                <strong>GET /health</strong> - Estado del servidor y base de datos
+            </div>
+            <div class="endpoint">
+                <strong>POST /rag/chat</strong> - Consultas médicas con IA
+            </div>
+            <div class="endpoint">
+                <strong>POST /feedback</strong> - Envío de feedback de tratamientos
+            </div>
+            <div class="endpoint">
+                <strong>POST /api/register</strong> - Registro de nuevos usuarios
+            </div>
+            <div class="endpoint">
+                <strong>POST /api/login</strong> - Autenticación de usuarios
+            </div>
+            <div class="endpoint">
+                <strong>GET /docs</strong> - Documentación automática de la API
+            </div>
+            
+            <h2>🔧 Tecnologías</h2>
+            <div>
+                <span class="tech">FastAPI</span>
+                <span class="tech">PostgreSQL</span>
+                <span class="tech">Neural Networks</span>
+                <span class="tech">RAG System</span>
+                <span class="tech">JWT Auth</span>
+            </div>
+            
+            <h2>📚 Documentación</h2>
+            <p>Visita <a href="/docs">/docs</a> para ver la documentación interactiva de la API.</p>
+            
+            <p style="text-align: center; margin-top: 30px; color: #666;">
+                Sistema de recomendación de plantas medicinales con IA híbrida
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
 def run():
     import uvicorn
