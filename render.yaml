@@ -1,12 +1,20 @@
 services:
   - type: web
-    name: plantmedicator-backend
-    env: python
+    name: plant-medicator-backend
+    runtime: python
+    python:
+      version: "3.11.8"
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m uvicorn app.server:app --host 0.0.0.0 --port $PORT
+    buildCommand: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: uvicorn app.server:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: PORT
+        value: 10000  # Render recomienda este puerto por defecto
       - key: ENV
         value: production
       - key: SECRET_KEY
-        value: GROF*_*09
+        generateValue: true  # Mejor práctica para claves secretas
+      - key: OPENAI_API_KEY
+        value: your-actual-key-here  # Añade esto si usas OpenAI
