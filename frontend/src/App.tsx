@@ -224,7 +224,7 @@ const App = () => {
       console.log('Response headers:', Object.fromEntries(response.headers.entries()));
   
       // Intentar obtener el cuerpo de la respuesta incluso si hay error
-      let data;
+      let data: any;
       try {
         data = await response.json();
         console.log('Response data:', data);
