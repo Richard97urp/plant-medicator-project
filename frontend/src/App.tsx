@@ -197,19 +197,46 @@ const App = () => {
         selected_plant: selectedPlant || null
       };
   
+      console.log('🔍 Debugging Info:');
+      console.log('API_BASE_URL:', API_BASE_URL);
+      console.log('Full URL:', `${API_BASE_URL}/rag/chat`);
+      console.log('Request body:', requestBody);
+      console.log('Token exists:', !!token);
+      console.log('Token preview:', token?.substring(0, 20) + '...');
+  
+      // Agregar un timeout para detectar si el servidor no responde
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
+  
       const response = await fetch(`${API_BASE_URL}/rag/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
       });
   
-      const data = await response.json();
+      clearTimeout(timeoutId);
+  
+      console.log('Response status:', response.status);
+      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+  
+      // Intentar obtener el cuerpo de la respuesta incluso si hay error
+      let data;
+      try {
+        data = await response.json();
+        console.log('Response data:', data);
+      } catch (parseError) {
+        console.error('Error parsing response JSON:', parseError);
+        const textResponse = await response.text();
+        console.log('Response as text:', textResponse);
+        throw new Error(`Error del servidor: ${response.status} - ${textResponse}`);
+      }
       
       if (!response.ok) {
-        throw new Error(data.detail || data.error || 'Error en la solicitud');
+        throw new Error(data.detail || data.error || `Error HTTP: ${response.status}`);
       }
   
       setMessages(prev => [...prev, {
@@ -226,13 +253,23 @@ const App = () => {
       }
   
     } catch (error) {
-      console.error('Error in requestMedication:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      console.error('❌ Error in requestMedication:', error);
+      
+      let errorMessage = 'Error desconocido';
+      
+      if (error.name === 'AbortError') {
+        errorMessage = 'Timeout: El servidor tardó demasiado en responder. Verifica que esté ejecutándose.';
+      } else if (error instanceof TypeError && error.message.includes('fetch')) {
+        errorMessage = 'Error de conexión: No se puede conectar al servidor. Verifica que esté ejecutándose en ' + API_BASE_URL;
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
       
       if (errorMessage.includes('401') || errorMessage.includes('autenticación')) {
         setIsAuthenticated(false);
         localStorage.removeItem('token');
         localStorage.removeItem('userInfo');
+        errorMessage = 'Sesión expirada. Por favor, inicia sesión nuevamente.';
       }
       
       setMessages(prev => [...prev, {
