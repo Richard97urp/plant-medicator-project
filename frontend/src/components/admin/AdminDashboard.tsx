@@ -2,15 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import RoleVerifier from './RoleVerifier';
 
-// Configuración de URLs según el entorno
+// Configuración de URLs según el entorno - CORREGIDA para coincidir con LoginForm
 const getApiUrl = () => {
+  // Verificar si hay variable de entorno configurada
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  
   // Si estamos en desarrollo (localhost)
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return 'http://localhost:8000';
   }
+  
   // Si estamos en producción, usar la URL de tu backend en Render
-  // Reemplaza 'your-backend-app-name' con el nombre real de tu app en Render
-  return 'https://your-backend-app-name.onrender.com';
+  return 'https://plant-medicator-project-n8n8.onrender.com';
 };
 
 const API_BASE_URL = getApiUrl();
@@ -52,7 +57,9 @@ const AdminDashboard = () => {
         try {
             const response = await fetch(`${API_BASE_URL}/api/verify-user-role?username=${username}`, {
                 headers: {
-                    'Authorization': `Bearer ${authToken}`
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
                 }
             });
             
@@ -70,38 +77,41 @@ const AdminDashboard = () => {
 
     useEffect(() => {
         const verifyAuth = async () => {
-            const authStr = localStorage.getItem('auth');
-            if (!authStr) {
+            // Verificar primero si hay token
+            const token = localStorage.getItem('token');
+            const userInfo = localStorage.getItem('userInfo');
+            
+            if (!token || !userInfo) {
+                console.log('No hay token o información de usuario');
                 navigate('/admin-login');
                 return;
             }
             
             try {
-                const authData = JSON.parse(authStr);
+                const userData = JSON.parse(userInfo);
                 
                 // Verificar estructura completa
-                if (!authData.user || !authData.user.username) {
+                if (!userData.username) {
+                    console.log('No hay username en la información del usuario');
                     navigate('/admin-login');
                     return;
                 }
                 
                 // Verificar el rol en la base de datos
                 try {
-                    const response = await fetch(`${API_BASE_URL}/api/verify-user-role?username=${authData.user.username}`, {
+                    const response = await fetch(`${API_BASE_URL}/api/verify-user-role?username=${userData.username}`, {
                         headers: {
-                            'Authorization': `Bearer ${authData.token}`  // Usa authData.token en lugar de access_token
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
                         }
                     });
                     
                     if (response.ok) {
                         const data = await response.json();
                         if (data.role === 'admin') {
-                            // Actualizar el rol en localStorage para mantener consistencia
-                            authData.user.role = 'admin';
-                            localStorage.setItem('auth', JSON.stringify(authData));
-                            
                             // Continuar con la carga normal
-                            addLog(`Usuario autenticado como administrador: ${authData.user.username}`);
+                            addLog(`Usuario autenticado como administrador: ${userData.username}`);
                             setIsVerifying(false);
                             return;
                         }
@@ -119,60 +129,6 @@ const AdminDashboard = () => {
         };
         
         verifyAuth();
-    }, [navigate]);
-
-    useEffect(() => {
-        const authStr = localStorage.getItem('auth');
-        if (!authStr) {
-            console.error('Acceso denegado: No hay información de autenticación');
-            navigate('/admin-login');
-            return;
-        }
-        
-        try {
-            const authData = JSON.parse(authStr);
-            console.log('Información de autenticación completa:', authData);
-            
-            // Verificar estructura completa
-            if (!authData.user) {
-                console.error('Estructura de usuario inválida');
-                navigate('/admin-login');
-                return;
-            }
-            
-            // Obtener rol directamente
-            const role = authData.user.role;
-            console.log('Rol detectado (sin procesar):', role);
-            
-            if (role === undefined || role === null) {
-                console.error('El rol no está definido');
-                navigate('/admin-login');
-                return;
-            }
-            
-            // Normalizar rol para comparación
-            const normalizedRole = String(role).toLowerCase().trim();
-            
-            console.log('Análisis de rol:', {
-                original: role,
-                normalizado: normalizedRole,
-                tipo: typeof role
-            });
-            
-            // Comprobar si es admin
-            if (normalizedRole !== 'admin') {
-                console.error('Acceso denegado: rol no es admin', {
-                    rolObtenido: role
-                });
-                navigate('/admin-login');
-            } else {
-                console.log('Acceso de administrador confirmado');
-                addLog(`Usuario autenticado como administrador: ${authData.user.username}`);
-            }
-        } catch (error) {
-            console.error('Error al verificar autenticación:', error);
-            navigate('/admin-login');
-        }
     }, [navigate]);
 
     const [logs, setLogs] = useState<string[]>([`Iniciando aplicación... (Entorno: ${API_BASE_URL})`]);
@@ -304,9 +260,18 @@ const AdminDashboard = () => {
         setError(null);
         
         try {
+            // Obtener token desde localStorage
+            const token = localStorage.getItem('token');
+            const userInfo = localStorage.getItem('userInfo');
+            
+            if (!token || !userInfo) {
+                throw new Error('No hay token de autenticación');
+            }
+
+            const userData = JSON.parse(userInfo);
+            
             // Generar IDs únicos para usuario y sesión
-            const userId = localStorage.getItem('userId') || crypto.randomUUID();
-            localStorage.setItem('userId', userId);
+            const userId = userData.username || crypto.randomUUID();
             const sessionId = crypto.randomUUID();
       
             const requestData = {
@@ -327,12 +292,14 @@ const AdminDashboard = () => {
 
             // Realizar la petición fetch con un timeout más largo para producción
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout para producción
+            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 segundos timeout para producción
             
             const response = await fetch(`${API_BASE_URL}/rag/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'Authorization': `Bearer ${token}` // Añadir token de autorización
                 },
                 body: JSON.stringify(requestData),
                 signal: controller.signal
@@ -346,6 +313,15 @@ const AdminDashboard = () => {
             if (!response.ok) {
                 const errorText = await response.text();
                 addLog(`Error en la respuesta: ${errorText}`);
+                
+                if (response.status === 401) {
+                    // Token expirado o inválido
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('userInfo');
+                    navigate('/admin-login');
+                    return;
+                }
+                
                 throw new Error(`Error HTTP: ${response.status}, Mensaje: ${errorText}`);
             }
       
@@ -358,16 +334,12 @@ const AdminDashboard = () => {
             let data;
             try {
                 data = JSON.parse(responseText);
-                //setDebugResponse(data); // Guarda para depuración SIEMPRE, no solo en caso de éxito
+                setDebugResponse(data); // Guarda para depuración
             } catch (e) {
+                addLog(`Error al parsear JSON: ${e}`);
                 setError(`Respuesta JSON inválida: ${responseText}`);
                 setIsLoading(false);
-                //return;
-            }
-            
-            // Incluso si hay error, ya tenemos los datos guardados para depuración
-            if (!response.ok) {
-                throw new Error(data.detail || `Error ${response.status}: ${response.statusText}`);
+                return;
             }
       
             // Verificar la estructura de la respuesta
@@ -441,8 +413,17 @@ const AdminDashboard = () => {
         } catch (error: any) {
             console.error("Error completo:", error);
             if (error.name === 'AbortError') {
-                addLog('La solicitud ha excedido el tiempo de espera (30 segundos)');
+                addLog('La solicitud ha excedido el tiempo de espera (60 segundos)');
                 setError('Tiempo de espera agotado. Verifica que el servidor esté funcionando.');
+            } else if (error.message.includes('Failed to fetch')) {
+                addLog('Error de conexión: No se puede conectar con el servidor');
+                setError('Error de conexión: No se puede conectar con el servidor. Verifique su conexión a internet.');
+            } else if (error.message.includes('NetworkError')) {
+                addLog('Error de red: Problema de conectividad');
+                setError('Error de red: Problema de conectividad. Intente nuevamente.');
+            } else if (error.message.includes('CORS')) {
+                addLog('Error de CORS: El servidor no permite solicitudes desde este dominio');
+                setError('Error de CORS: El servidor no permite solicitudes desde este dominio.');
             } else {
                 addLog(`Error: ${error.message}`);
                 setError(error.message || "Error al obtener la recomendación");
@@ -458,14 +439,31 @@ const AdminDashboard = () => {
         addLog('Recargando datos...');
         fetchRecommendation();
     };
+
+    // Función para cerrar sesión
+    const handleLogout = () => {
+        localStorage.removeItem('token');
+        localStorage.removeItem('userInfo');
+        navigate('/admin-login');
+    };
   
     useEffect(() => {
-        fetchRecommendation();
-    }, []);
+        if (!isVerifying) {
+            fetchRecommendation();
+        }
+    }, [isVerifying]);
   
     return (
         <div className="p-6 bg-gray-100 min-h-screen">
-            <h1 className="text-2xl font-bold mb-6">Panel de Administración</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-2xl font-bold">Panel de Administración</h1>
+                <button 
+                    onClick={handleLogout}
+                    className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
+                >
+                    Cerrar Sesión
+                </button>
+            </div>
             
             {/* Mostrar información del entorno */}
             <div className="mb-4 p-3 bg-blue-50 rounded-lg">
