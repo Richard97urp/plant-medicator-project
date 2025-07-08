@@ -20,7 +20,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
     const [isLoading, setIsLoading] = useState(false);
 
     // Usar la misma configuración que RegisterForm
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://plant-medicator-project.onrender.com';
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://plant-medicator-project-n8n8.onrender.com';
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
