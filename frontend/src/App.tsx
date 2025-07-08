@@ -252,17 +252,21 @@ const App = () => {
         setShowFeedbackForm(true);
       }
   
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('❌ Error in requestMedication:', error);
       
       let errorMessage = 'Error desconocido';
       
-      if (error.name === 'AbortError') {
-        errorMessage = 'Timeout: El servidor tardó demasiado en responder. Verifica que esté ejecutándose.';
-      } else if (error instanceof TypeError && error.message.includes('fetch')) {
-        errorMessage = 'Error de conexión: No se puede conectar al servidor. Verifica que esté ejecutándose en ' + API_BASE_URL;
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          errorMessage = 'Timeout: El servidor tardó demasiado en responder. Verifica que esté ejecutándose.';
+        } else if (error instanceof TypeError && error.message.includes('fetch')) {
+          errorMessage = 'Error de conexión: No se puede conectar al servidor. Verifica que esté ejecutándose en ' + API_BASE_URL;
+        } else {
+          errorMessage = error.message;
+        }
+      } else if (typeof error === 'string') {
+        errorMessage = error;
       }
       
       if (errorMessage.includes('401') || errorMessage.includes('autenticación')) {
