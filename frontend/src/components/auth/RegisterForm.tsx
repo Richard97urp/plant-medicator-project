@@ -53,7 +53,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
 
   // URL del API usando la variable de entorno de Vercel
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://plant-medicator-project.onrender.com';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://plant-medicator-project-n8n8.onrender.com';
 
   const occupationOptions = [
     "Sin nivel educativo/sin instrucción",
