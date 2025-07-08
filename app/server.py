@@ -96,7 +96,7 @@ app = FastAPI(lifespan=lifespan)
 origins = [
     "http://localhost:3000",  # Para desarrollo local
     "http://localhost:3001",  # Para desarrollo local alternativo
-    "https://plant-medicator-project.vercel.app",  # Tu dominio de Vercel
+    "https://plant-medicator-project-red.vercel.app",  # Tu dominio de Vercel
     "https://plant-medicator-project-pvin1pbxd-richard97chzs-projects.vercel.app",  # Tu dominio de deployment
     "https://*.vercel.app",  # Permitir todos los subdominios de Vercel
 ]
