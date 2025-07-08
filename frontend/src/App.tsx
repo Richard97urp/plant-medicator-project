@@ -24,17 +24,7 @@ interface FeedbackData {
   additionalComments: string;
 }
 
-// Configuración de API con verificación de ambiente
-const getApiBaseUrl = () => {
-  // En producción, usar la URL de tu backend desplegado en Render
-  if (window.location.hostname !== 'localhost') {
-    return 'https://tu-backend-url.onrender.com'; // Reemplaza con tu URL real
-  }
-  // En desarrollo local
-  return process.env.REACT_APP_API_URL || 'http://localhost:8000';
-};
-
-const API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const QUESTIONS = {
   SYMPTOMS: '¿Cuáles son tus síntomas principales?',
@@ -117,17 +107,10 @@ const App = () => {
         throw new Error('Faltan datos requeridos para el feedback');
       }
 
-      const token = localStorage.getItem('token');
-      if (!token) {
-        throw new Error('Token de autenticación no encontrado');
-      }
-
       const response = await fetch(`${API_BASE_URL}/feedback`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json',
         },
         body: JSON.stringify({
           session_id: sessionIdRef.current,
@@ -139,14 +122,8 @@ const App = () => {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          errorData = { detail: `Error HTTP ${response.status}: ${errorText}` };
-        }
-        throw new Error(errorData.detail || `Error HTTP ${response.status}`);
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Error al guardar la evaluación');
       }
 
       const data = await response.json();
@@ -205,13 +182,6 @@ const App = () => {
         setIsAuthenticated(false);
         return;
       }
-
-      // Mostrar mensaje de carga
-      setMessages(prev => [...prev, {
-        id: uuidv4(),
-        message: "Procesando su consulta, por favor espere...",
-        isUser: false
-      }]);
   
       const allergies = patientInfo.allergies || 'ninguna';
   
@@ -232,52 +202,41 @@ const App = () => {
       console.log('Full URL:', `${API_BASE_URL}/rag/chat`);
       console.log('Request body:', requestBody);
       console.log('Token exists:', !!token);
+      console.log('Token preview:', token?.substring(0, 20) + '...');
   
-      // Configurar timeout más largo para producción
+      // Agregar un timeout para detectar si el servidor no responde
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 segundos
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
   
       const response = await fetch(`${API_BASE_URL}/rag/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json',
-          // Headers adicionales para CORS
-          'Access-Control-Allow-Origin': '*',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(requestBody),
-        signal: controller.signal,
-        mode: 'cors', // Explícitamente configurar CORS
+        signal: controller.signal
       });
   
       clearTimeout(timeoutId);
   
       console.log('Response status:', response.status);
       console.log('Response headers:', Object.fromEntries(response.headers.entries()));
-
-      // Remover mensaje de carga
-      setMessages(prev => prev.filter(msg => msg.message !== "Procesando su consulta, por favor espere..."));
   
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Error response:', errorText);
-        
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          errorData = { detail: `Error HTTP ${response.status}: ${errorText}` };
-        }
-        
-        throw new Error(errorData.detail || errorData.error || `Error HTTP: ${response.status}`);
+      // Intentar obtener el cuerpo de la respuesta incluso si hay error
+      let data: any;
+      try {
+        data = await response.json();
+        console.log('Response data:', data);
+      } catch (parseError) {
+        console.error('Error parsing response JSON:', parseError);
+        const textResponse = await response.text();
+        console.log('Response as text:', textResponse);
+        throw new Error(`Error del servidor: ${response.status} - ${textResponse}`);
       }
-
-      const data = await response.json();
-      console.log('Response data:', data);
       
-      if (!data.answer) {
-        throw new Error('Respuesta inválida del servidor');
+      if (!response.ok) {
+        throw new Error(data.detail || data.error || `Error HTTP: ${response.status}`);
       }
   
       setMessages(prev => [...prev, {
@@ -296,16 +255,13 @@ const App = () => {
     } catch (error: unknown) {
       console.error('❌ Error in requestMedication:', error);
       
-      // Remover mensaje de carga en caso de error
-      setMessages(prev => prev.filter(msg => msg.message !== "Procesando su consulta, por favor espere..."));
-      
       let errorMessage = 'Error desconocido';
       
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
-          errorMessage = 'Timeout: El servidor tardó demasiado en responder. Por favor, intenta nuevamente.';
+          errorMessage = 'Timeout: El servidor tardó demasiado en responder. Verifica que esté ejecutándose.';
         } else if (error instanceof TypeError && error.message.includes('fetch')) {
-          errorMessage = `Error de conexión: No se puede conectar al servidor. Verifica la URL: ${API_BASE_URL}`;
+          errorMessage = 'Error de conexión: No se puede conectar al servidor. Verifica que esté ejecutándose en ' + API_BASE_URL;
         } else {
           errorMessage = error.message;
         }
@@ -449,7 +405,7 @@ const App = () => {
             setUserDisplayName(parsedUser.fullName || parsedUser.username || 'Usuario');
             setIsAuthenticated(true);
             
-            // Verificar token con el backend
+            // Opcional: verificar token con el backend
             verifyToken(token);
         } catch (error) {
             console.error('Error parsing user info:', error);
@@ -461,10 +417,8 @@ const App = () => {
         try {
             const response = await fetch(`${API_BASE_URL}/health`, {
                 headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Accept': 'application/json',
-                },
-                mode: 'cors',
+                    'Authorization': `Bearer ${token}`
+                }
             });
             
             if (!response.ok) {
@@ -599,13 +553,6 @@ const App = () => {
     
     return (
       <div className="bg-white rounded-lg shadow-lg p-4 min-h-[500px] flex flex-col">
-        {/* Mostrar información de debugging en desarrollo */}
-        {window.location.hostname === 'localhost' && (
-          <div className="mb-4 p-2 bg-blue-50 text-blue-800 text-xs rounded">
-            <strong>Debug Info:</strong> API URL: {API_BASE_URL}
-          </div>
-        )}
-        
         {showFeedbackForm && (
           <div className="mb-4 bg-green-50 border-l-4 border-green-500 p-4 rounded-lg shadow-md">
             <h2 className="text-lg font-semibold text-green-800 mb-2">
@@ -661,7 +608,7 @@ const App = () => {
                   isProcessing ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'
                 }`}
               >
-                {isProcessing ? 'Enviando...' : 'Enviar'}
+                Enviar
               </button>
             </div>
             <button
