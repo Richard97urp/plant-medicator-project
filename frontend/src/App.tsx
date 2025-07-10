@@ -28,7 +28,7 @@ interface FeedbackData {
 const getApiBaseUrl = () => {
   // En producción, usar la URL de tu backend desplegado en Render
   if (window.location.hostname !== 'localhost') {
-    return 'https://plant-medicator-project-n8n8.onrender.com/'; // Reemplaza con tu URL real
+    return 'https://plant-medicator-project-n8n8.onrender.com'; // Reemplaza con tu URL real
   }
   // En desarrollo local
   return process.env.REACT_APP_API_URL || 'http://localhost:8000';
