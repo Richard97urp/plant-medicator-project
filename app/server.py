@@ -79,9 +79,9 @@ except ImportError:
 hybrid_recommender = HybridRecommender()
 
 # Configuración del JWT
-SECRET_KEY = "GROF*_*09"
+SECRET_KEY = os.getenv("SECRET_KEY", "GROF*_*09")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 8  # 4 horas de validez (ajustable)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
