@@ -862,29 +862,23 @@ async def health_check():
             connection.close()
 
 def get_db_connection():
-    """Establece conexión con la base de datos PostgreSQL"""
+    """Conexión robusta que intenta DATABASE_URL primero, luego variables individuales"""
     try:
+        # 1️⃣ PRIMERA OPCIÓN: Intenta con DATABASE_URL (Render/Producción)
         database_url = os.getenv("DATABASE_URL")
-        
         if database_url:
-            # Render usa URLs en formato postgres:// que psycopg2 no soporta directamente
+            logger.info(f"🔗 Intentando conectar con DATABASE_URL: postgresql://...@{database_url.split('@')[-1]}")
+            
+            # Corrección para Render (cambia postgres:// a postgresql://)
             if database_url.startswith("postgres://"):
                 database_url = database_url.replace("postgres://", "postgresql://", 1)
             
-            # Parsear la URL para extraer los componentes
-            import urllib.parse
-            parsed = urllib.parse.urlparse(database_url)
-            
-            # Extraer componentes de la URL
-            return psycopg2.connect(
-                host=parsed.hostname,
-                port=parsed.port or 5432,
-                user=parsed.username,
-                password=parsed.password,
-                database=parsed.path.lstrip('/')  # Remover el '/' inicial
-            )
-        
-        # Fallback para desarrollo local
+            conn = psycopg2.connect(database_url)
+            logger.info("✅ Conexión exitosa via DATABASE_URL")
+            return conn
+
+        # 2️⃣ SEGUNDA OPCIÓN: Fallback a variables individuales (Desarrollo local)
+        logger.info("🔗 DATABASE_URL no encontrada, usando variables individuales")
         return psycopg2.connect(
             dbname=os.getenv("DB_NAME", "postgres"),
             user=os.getenv("DB_USER", "postgres"),
@@ -892,10 +886,10 @@ def get_db_connection():
             host=os.getenv("DB_HOST", "localhost"),
             port=os.getenv("DB_PORT", "5432")
         )
+
     except Exception as e:
-        logger.error(f"❌ Error conectando a la base de datos: {str(e)}")
-        logger.error(f"DATABASE_URL: {os.getenv('DATABASE_URL')}")
-        raise
+        logger.error(f"❌ Error de conexión: {str(e)}")
+        raise RuntimeError(f"No se pudo conectar a PostgreSQL: {str(e)}")
         
 # Endpoint para verificar variables de entorno (útil para debugging)
 @app.get("/debug/env")
