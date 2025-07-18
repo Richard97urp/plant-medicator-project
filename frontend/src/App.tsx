@@ -122,7 +122,10 @@ const App = () => {
         throw new Error('Token de autenticación no encontrado');
       }
 
-      const response = await fetch(`${API_BASE_URL}/feedback`, {
+      // Normalizar URL para evitar dobles slashes
+      const normalizedUrl = `${API_BASE_URL.replace(/\/+$/, '')}/feedback`;
+
+      const response = await fetch(normalizedUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -227,9 +230,12 @@ const App = () => {
         selected_plant: selectedPlant || null
       };
   
+      // Normalizar URL para evitar dobles slashes
+      const normalizedUrl = `${API_BASE_URL.replace(/\/+$/, '')}/rag/chat`;
+  
       console.log('🔍 Debugging Info:');
       console.log('API_BASE_URL:', API_BASE_URL);
-      console.log('Full URL:', `${API_BASE_URL}/rag/chat`);
+      console.log('Normalized URL:', normalizedUrl);
       console.log('Request body:', requestBody);
       console.log('Token exists:', !!token);
   
@@ -237,18 +243,16 @@ const App = () => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 segundos
   
-      const response = await fetch(`${API_BASE_URL}/rag/chat`, {
+      const response = await fetch(normalizedUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
           'Accept': 'application/json',
-          // Headers adicionales para CORS
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
-        mode: 'cors', // Explícitamente configurar CORS
+        mode: 'cors',
       });
   
       clearTimeout(timeoutId);
@@ -262,6 +266,10 @@ const App = () => {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Error response:', errorText);
+        
+        if (response.status === 404) {
+          throw new Error('Ruta no encontrada en el servidor. Verifica que la API esté configurada correctamente.');
+        }
         
         let errorData;
         try {
@@ -459,7 +467,10 @@ const App = () => {
   
     const verifyToken = async (token: string) => {
         try {
-            const response = await fetch(`${API_BASE_URL}/health`, {
+            // Normalizar URL para evitar dobles slashes
+            const normalizedUrl = `${API_BASE_URL.replace(/\/+$/, '')}/health`;
+            
+            const response = await fetch(normalizedUrl, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Accept': 'application/json',
