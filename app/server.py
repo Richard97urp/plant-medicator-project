@@ -550,6 +550,8 @@ async def chat_endpoint(
 
 @app.post("/feedback")
 async def save_feedback(feedback: FeedbackRequest):
+    conn = None
+    cursor = None
     try:
         print_terminal_separator()
         print("📝 GUARDANDO FEEDBACK")
@@ -570,7 +572,27 @@ async def save_feedback(feedback: FeedbackRequest):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Modificar la consulta para usar UUID
+        # VERIFICAR QUE EL SESSION_ID EXISTE EN CONSULTATIONS
+        cursor.execute(
+            """
+            SELECT session_id FROM consultations 
+            WHERE session_id = %s
+            LIMIT 1
+            """,
+            (str(session_uuid),)
+        )
+        consultation_exists = cursor.fetchone()
+        
+        if not consultation_exists:
+            logger.warning(f"⚠️  Session ID no encontrado en consultations: {session_uuid}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontró una consulta con el session_id: {feedback.session_id}"
+            )
+        
+        logger.info(f"✅ Session ID encontrado en consultations: {session_uuid}")
+        
+        # Verificar si ya existe feedback para esta sesión
         cursor.execute(
             """
             SELECT id FROM treatment_feedback 
@@ -627,6 +649,7 @@ async def save_feedback(feedback: FeedbackRequest):
             "message": "Feedback guardado correctamente",
             "session_id": str(session_uuid)
         }
+        
     except HTTPException as e:
         logger.error(f"❌ Error HTTP en feedback: {e.detail}")
         raise e
@@ -638,9 +661,111 @@ async def save_feedback(feedback: FeedbackRequest):
             detail=f"Error al guardar el feedback: {str(e)}"
         )
     finally:
-        if 'conn' in locals() and conn is not None:
-            if 'cursor' in locals() and cursor is not None:
-                cursor.close()
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.close()
+
+# FUNCIÓN ADICIONAL: Endpoint para verificar session_id
+@app.get("/debug/session/{session_id}")
+async def debug_session(session_id: str):
+    """
+    Endpoint para debugging - verificar si un session_id existe en consultations
+    """
+    conn = None
+    cursor = None
+    try:
+        # Validar UUID
+        session_uuid = uuid.UUID(session_id)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verificar en consultations
+        cursor.execute(
+            """
+            SELECT session_id, created_at, user_id 
+            FROM consultations 
+            WHERE session_id = %s
+            """,
+            (str(session_uuid),)
+        )
+        consultation = cursor.fetchone()
+        
+        # Verificar en treatment_feedback
+        cursor.execute(
+            """
+            SELECT id, created_at, effectiveness_rating 
+            FROM treatment_feedback 
+            WHERE CAST(session_id AS VARCHAR) = %s
+            """,
+            (str(session_uuid),)
+        )
+        feedback = cursor.fetchone()
+        
+        return {
+            "session_id": str(session_uuid),
+            "exists_in_consultations": consultation is not None,
+            "consultation_data": {
+                "created_at": consultation[1].isoformat() if consultation else None,
+                "user_id": consultation[2] if consultation else None
+            } if consultation else None,
+            "exists_in_feedback": feedback is not None,
+            "feedback_data": {
+                "id": feedback[0],
+                "created_at": feedback[1].isoformat(),
+                "effectiveness_rating": feedback[2]
+            } if feedback else None
+        }
+        
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.close()
+
+# FUNCIÓN ADICIONAL: Limpiar sessions huérfanas (opcional)
+@app.post("/debug/cleanup-orphaned-feedback")
+async def cleanup_orphaned_feedback():
+    """
+    Endpoint para limpiar feedback sin sesiones válidas (solo para debugging)
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Encontrar feedback sin consultations
+        cursor.execute("""
+            SELECT tf.id, tf.session_id 
+            FROM treatment_feedback tf
+            LEFT JOIN consultations c ON CAST(tf.session_id AS VARCHAR) = c.session_id
+            WHERE c.session_id IS NULL
+        """)
+        orphaned = cursor.fetchall()
+        
+        if orphaned:
+            logger.info(f"🧹 Encontrados {len(orphaned)} feedbacks huérfanos")
+            # Opcionalmente, podrías eliminarlos aquí
+            # cursor.execute("DELETE FROM treatment_feedback WHERE id IN %s", (tuple(row[0] for row in orphaned),))
+            # conn.commit()
+        
+        return {
+            "orphaned_count": len(orphaned),
+            "orphaned_sessions": [row[1] for row in orphaned]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
             conn.close()
             
 @app.post("/api/register")
