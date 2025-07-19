@@ -566,13 +566,8 @@ async def save_feedback(feedback: FeedbackRequest):
                 detail="Invalid session_id format"
             )
         
-        conn = psycopg2.connect(
-            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"),
-            user=os.getenv("DB_USER"),            
-            password=os.getenv("DB_PASSWORD"),    
-            host=os.getenv("DB_HOST"),            
-            port=os.getenv("DB_PORT", "5432")        
-        )
+        # Usar la función centralizada de conexión
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # Modificar la consulta para usar UUID
@@ -865,12 +860,13 @@ def get_db_connection():
         # 1️⃣ PRIMERA OPCIÓN: Intenta con DATABASE_URL (Render/Producción)
         database_url = os.getenv("DATABASE_URL")
         if database_url:
-            logger.info(f"🔗 Intentando conectar con DATABASE_URL: postgresql://...@{database_url.split('@')[-1]}")
+            logger.info(f"🔗 Intentando conectar con DATABASE_URL")
             
             # Corrección para Render (cambia postgres:// a postgresql://)
             if database_url.startswith("postgres://"):
                 database_url = database_url.replace("postgres://", "postgresql://", 1)
             
+            # Usar la URL completa directamente con psycopg2
             conn = psycopg2.connect(database_url)
             logger.info("✅ Conexión exitosa via DATABASE_URL")
             return conn
