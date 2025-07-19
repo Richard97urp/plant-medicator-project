@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ import os
 import logging
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordBearer
+from urllib.parse import urlparse
 
 
 # Configurar logging más detallado
@@ -113,7 +115,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,  # Usar 'origins' en lugar de 'CORS_ORIGINS'
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],  # Agregado HEAD
     allow_headers=["*"],
 )
 
@@ -184,13 +186,7 @@ def get_previous_recommendations_from_session(session_id: str) -> Dict[str, Any]
     conn = None
     cursor = None
     try:
-        conn = psycopg2.connect(
-            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"), 
-            user=os.getenv("DB_USER"),            
-            password=os.getenv("DB_PASSWORD"),    
-            host=os.getenv("DB_HOST"),            
-            port=os.getenv("DB_PORT", "5432")           
-        )
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # Buscar recomendaciones previas en la sesión
@@ -356,13 +352,7 @@ async def get_user_data_from_db(username: str) -> Optional[Dict[str, Any]]:
     conn = None
     cursor = None
     try:
-        conn = psycopg2.connect(
-            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"),
-            user=os.getenv("DB_USER"),            
-            password=os.getenv("DB_PASSWORD"),    
-            host=os.getenv("DB_HOST"),            
-            port=os.getenv("DB_PORT", "5432")          
-        )
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # Consulta para obtener datos del usuario
@@ -424,6 +414,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+# Agregar endpoint HEAD para la ruta raíz
+@app.head("/")
+async def head_welcome():
+    """
+    Endpoint HEAD para verificación de estado
+    """
+    return {}
             
 @app.post("/rag/chat")
 async def chat_endpoint(
@@ -568,13 +566,7 @@ async def save_feedback(feedback: FeedbackRequest):
                 detail="Invalid session_id format"
             )
         
-        conn = psycopg2.connect(
-            dbname=os.getenv("DATABASE_URL") or os.getenv("DB_NAME"),
-            user=os.getenv("DB_USER"),            
-            password=os.getenv("DB_PASSWORD"),    
-            host=os.getenv("DB_HOST"),            
-            port=os.getenv("DB_PORT", "5432")        
-        )
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # Modificar la consulta para usar UUID
