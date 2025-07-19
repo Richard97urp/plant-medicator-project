@@ -571,7 +571,7 @@ async def save_feedback(feedback: FeedbackRequest):
                 status_code=404,
                 detail="No existe una consulta con este session_id"
             )
-
+        )
         # 2. Insertar/actualizar feedback
         cursor.execute(
             """
