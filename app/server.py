@@ -550,98 +550,64 @@ async def chat_endpoint(
 
 @app.post("/feedback")
 async def save_feedback(feedback: FeedbackRequest):
+    conn = None
+    cursor = None
     try:
-        print_terminal_separator()
-        print("📝 GUARDANDO FEEDBACK")
-        print_terminal_separator()
-        
-        # Validar que session_id es un UUID válido
+        # Validar session_id
         try:
             session_uuid = uuid.UUID(feedback.session_id)
-            logger.info(f"📋 Session ID válido: {session_uuid}")
         except ValueError:
-            logger.error(f"❌ Session ID inválido: {feedback.session_id}")
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid session_id format"
-            )
-        
+            raise HTTPException(status_code=400, detail="Formato de session_id inválido")
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Modificar la consulta para usar UUID
+
+        # 1. Verificar si la consulta existe
+        cursor.execute(
+            "SELECT 1 FROM patient_consultations WHERE session_id = %s",
+            (str(session_uuid),)
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=404,
+                detail="No existe una consulta con este session_id"
+            )
+
+        # 2. Insertar/actualizar feedback
         cursor.execute(
             """
-            SELECT id FROM treatment_feedback 
-            WHERE CAST(session_id AS VARCHAR) = %s
-            """,
-            (str(session_uuid),)
-        )
-        existing_feedback = cursor.fetchone()
-        
-        if existing_feedback:
-            logger.info("🔄 Actualizando feedback existente")
-            update_query = """
-            UPDATE treatment_feedback 
-            SET effectiveness_rating = %s,
-                side_effects = %s,
-                improvement_time = %s,
-                additional_comments = %s,
+            INSERT INTO treatment_feedback (
+                session_id, effectiveness_rating, side_effects,
+                improvement_time, additional_comments
+            ) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (session_id) DO UPDATE SET
+                effectiveness_rating = EXCLUDED.effectiveness_rating,
+                side_effects = EXCLUDED.side_effects,
+                improvement_time = EXCLUDED.improvement_time,
+                additional_comments = EXCLUDED.additional_comments,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE CAST(session_id AS VARCHAR) = %s
-            """
-            cursor.execute(update_query, (
-                feedback.effectiveness_rating,
-                feedback.side_effects,
-                feedback.improvement_time,
-                feedback.additional_comments,
-                str(session_uuid)
-            ))
-        else:
-            logger.info("➕ Creando nuevo feedback")
-            insert_query = """
-            INSERT INTO treatment_feedback 
-                (session_id, effectiveness_rating, side_effects, improvement_time, 
-                 additional_comments, created_at)
-            VALUES 
-                (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            """
-            cursor.execute(insert_query, (
+            """,
+            (
                 str(session_uuid),
                 feedback.effectiveness_rating,
                 feedback.side_effects,
                 feedback.improvement_time,
                 feedback.additional_comments
-            ))
+            )
+        )
         
         conn.commit()
-        logger.info("✅ Feedback guardado correctamente")
-        
-        print_terminal_separator()
-        print("✅ FEEDBACK GUARDADO EXITOSAMENTE")
-        print_terminal_separator()
-        
-        return {
-            "status": "success",
-            "message": "Feedback guardado correctamente",
-            "session_id": str(session_uuid)
-        }
-    except HTTPException as e:
-        logger.error(f"❌ Error HTTP en feedback: {e.detail}")
-        raise e
-    except Exception as e:
-        logger.error(f"❌ Error guardando feedback: {str(e)}")
-        print(f"❌ Error saving feedback: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error al guardar el feedback: {str(e)}"
-        )
-    finally:
-        if 'conn' in locals() and conn is not None:
-            if 'cursor' in locals() and cursor is not None:
-                cursor.close()
-            conn.close()
+        return {"status": "success", "message": "Feedback guardado"}
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error guardando feedback: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+            
 @app.post("/api/register")
 async def register_user(user: UserRegistration):
     connection = None
