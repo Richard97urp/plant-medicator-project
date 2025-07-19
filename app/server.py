@@ -189,10 +189,10 @@ def get_previous_recommendations_from_session(session_id: str) -> Dict[str, Any]
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Buscar recomendaciones previas en la sesión
+        # CAMBIO: consultations -> patient_consultations
         query = """
         SELECT rna_recommendations, rag_recommendations, selected_system
-        FROM consultations 
+        FROM patient_consultations 
         WHERE session_id = %s 
         ORDER BY created_at DESC 
         LIMIT 1
@@ -572,10 +572,10 @@ async def save_feedback(feedback: FeedbackRequest):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # VERIFICAR QUE EL SESSION_ID EXISTE EN CONSULTATIONS
+        # CAMBIO: consultations -> patient_consultations
         cursor.execute(
             """
-            SELECT session_id FROM consultations 
+            SELECT session_id FROM patient_consultations 
             WHERE session_id = %s
             LIMIT 1
             """,
@@ -584,13 +584,13 @@ async def save_feedback(feedback: FeedbackRequest):
         consultation_exists = cursor.fetchone()
         
         if not consultation_exists:
-            logger.warning(f"⚠️  Session ID no encontrado en consultations: {session_uuid}")
+            logger.warning(f"⚠️  Session ID no encontrado en patient_consultations: {session_uuid}")
             raise HTTPException(
                 status_code=404,
                 detail=f"No se encontró una consulta con el session_id: {feedback.session_id}"
             )
         
-        logger.info(f"✅ Session ID encontrado en consultations: {session_uuid}")
+        logger.info(f"✅ Session ID encontrado en patient_consultations: {session_uuid}")
         
         # Verificar si ya existe feedback para esta sesión
         cursor.execute(
@@ -670,7 +670,7 @@ async def save_feedback(feedback: FeedbackRequest):
 @app.get("/debug/session/{session_id}")
 async def debug_session(session_id: str):
     """
-    Endpoint para debugging - verificar si un session_id existe en consultations
+    Endpoint para debugging - verificar si un session_id existe en patient_consultations
     """
     conn = None
     cursor = None
@@ -681,11 +681,11 @@ async def debug_session(session_id: str):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Verificar en consultations
+        # CAMBIO: consultations -> patient_consultations
         cursor.execute(
             """
             SELECT session_id, created_at, user_id 
-            FROM consultations 
+            FROM patient_consultations 
             WHERE session_id = %s
             """,
             (str(session_uuid),)
@@ -705,7 +705,7 @@ async def debug_session(session_id: str):
         
         return {
             "session_id": str(session_uuid),
-            "exists_in_consultations": consultation is not None,
+            "exists_in_patient_consultations": consultation is not None,
             "consultation_data": {
                 "created_at": consultation[1].isoformat() if consultation else None,
                 "user_id": consultation[2] if consultation else None
@@ -740,12 +740,12 @@ async def cleanup_orphaned_feedback():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Encontrar feedback sin consultations
+        # CAMBIO: consultations -> patient_consultations
         cursor.execute("""
             SELECT tf.id, tf.session_id 
             FROM treatment_feedback tf
-            LEFT JOIN consultations c ON CAST(tf.session_id AS VARCHAR) = c.session_id
-            WHERE c.session_id IS NULL
+            LEFT JOIN patient_consultations pc ON CAST(tf.session_id AS VARCHAR) = pc.session_id
+            WHERE pc.session_id IS NULL
         """)
         orphaned = cursor.fetchall()
         
