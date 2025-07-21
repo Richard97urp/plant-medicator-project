@@ -527,7 +527,7 @@ async def chat_endpoint(
             )
 
         # =====================================================================
-        # NUEVA LÓGICA DE GUARDADO - SOLO PARA PLANT_SELECTION
+        # CÓDIGO CORREGIDO PARA GUARDAR CONSULTA - VERSIÓN FINAL
         # =====================================================================
         if consultation_state == "PLANT_SELECTION":
             conn = None
@@ -542,11 +542,12 @@ async def chat_endpoint(
                 allergies = consultation.patient_info.get('allergies', '')
                 recommended_plant = consultation.selected_plant or ''
                 
-                # Preparar recomendaciones
+                # Preparar recomendaciones RNA/RAG
                 rna_recommendations = str(response.get('rna_recommendations', []))
                 rag_recommendations = response.get('rag_recommendations', '')
                 selected_system = response.get('selected_system', '')
                 
+                # Consulta SQL CORREGIDA (typo en consultation_date)
                 insert_query = """
                 INSERT INTO patient_consultations (
                     user_id, 
@@ -576,6 +577,7 @@ async def chat_endpoint(
                 RETURNING id
                 """
                 
+                # Ejecutar la consulta
                 cursor.execute(insert_query, (
                     current_user,
                     consultation.session_id,
@@ -590,6 +592,7 @@ async def chat_endpoint(
                     selected_system
                 ))
                 
+                # Verificar que se insertó correctamente
                 result = cursor.fetchone()
                 conn.commit()
                 
@@ -622,7 +625,7 @@ async def chat_endpoint(
         else:
             logger.info("ℹ️ Consulta en estado INITIAL_CONSULTATION - No se guarda en DB todavía")
         # =====================================================================
-        # FIN DE NUEVA LÓGICA DE GUARDADO
+        # FIN DEL CÓDIGO CORREGIDO
         # =====================================================================
 
         logger.info("✅ CONSULTA PROCESADA EXITOSAMENTE")
