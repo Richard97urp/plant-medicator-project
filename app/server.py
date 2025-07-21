@@ -532,7 +532,7 @@ async def chat_endpoint(
             )
 
         # =====================================================================
-        # CÓDIGO CORREGIDO PARA GUARDAR CONSULTA (VERSIÓN FINAL)
+        # CÓDIGO CORREGIDO PARA GUARDAR CONSULTA - VERSIÓN FINAL
         # =====================================================================
         conn = None
         cursor = None
@@ -540,13 +540,18 @@ async def chat_endpoint(
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Obtener datos para guardar (ajustados a tu esquema real)
+            # Obtener datos para guardar
             symptoms = consultation.patient_info.get('symptoms', '')
             duration = consultation.patient_info.get('duration', '')
             allergies = consultation.patient_info.get('allergies', '')
             recommended_plant = consultation.selected_plant or ''
             
-            # Consulta SQL ACTUALIZADA con solo las columnas que existen
+            # Preparar recomendaciones RNA/RAG
+            rna_recommendations = str(response.get('rna_recommendations', [])) if consultation_state == "INITIAL_CONSULTATION" else ''
+            rag_recommendations = response.get('rag_recommendations', '')
+            selected_system = response.get('selected_system', '')
+            
+            # Consulta SQL con solo las columnas que existen
             insert_query = """
             INSERT INTO patient_consultations (
                 user_id, 
@@ -576,11 +581,6 @@ async def chat_endpoint(
             RETURNING id
             """
             
-            # Preparar recomendaciones RNA/RAG
-            rna_recommendations = str(response.get('rna_recommendations', [])) if consultation_state == "INITIAL_CONSULTATION" else ''
-            rag_recommendations = response.get('rag_recommendations', '')
-            selected_system = response.get('selected_system', '')
-            
             # Ejecutar la consulta
             cursor.execute(insert_query, (
                 current_user,
@@ -589,7 +589,7 @@ async def chat_endpoint(
                 duration,
                 allergies,
                 recommended_plant,
-                datetime.now(),  # consultation_date
+                datetime.now(),
                 consultation_state,
                 rna_recommendations,
                 rag_recommendations,
@@ -629,7 +629,7 @@ async def chat_endpoint(
         # =====================================================================
         # FIN DEL CÓDIGO CORREGIDO
         # =====================================================================
-        
+
         logger.info("✅ CONSULTA PROCESADA EXITOSAMENTE")
         return response
         
@@ -652,174 +652,83 @@ async def save_feedback(feedback: FeedbackRequest):
     conn = None
     cursor = None
     try:
-        print_terminal_separator()
-        print("📝 GUARDANDO FEEDBACK")
-        print_terminal_separator()
-        
-        # Validar que session_id es un UUID válido
+        # Validar que el session_id sea un UUID válido
         try:
             session_uuid = uuid.UUID(feedback.session_id)
-            logger.info(f"📋 Session ID válido: {session_uuid}")
         except ValueError:
-            logger.error(f"❌ Session ID inválido: {feedback.session_id}")
+            logger.error(f"❌ session_id inválido: {feedback.session_id}")
             raise HTTPException(
                 status_code=400,
-                detail="Formato de session_id inválido"
+                detail="El session_id proporcionado no es válido"
             )
         
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # PRIMERO: Verificar si existe la consulta
+        # Verificar si existe la consulta
         cursor.execute(
             """
-            SELECT id, user_id FROM patient_consultations 
+            SELECT id FROM patient_consultations 
             WHERE session_id = %s
             LIMIT 1
             """,
             (str(session_uuid),)
         )
-        consultation_data = cursor.fetchone()
+        consultation_exists = cursor.fetchone()
         
-        if not consultation_data:
-            logger.warning(f"⚠️ Session ID no encontrado en patient_consultations: {session_uuid}")
-            
-            # Crear una entrada mínima en patient_consultaciones usando los campos correctos
-            try:
-                logger.info("🆕 Creando entrada mínima en patient_consultations")
-                cursor.execute(
-                    """
-                    INSERT INTO patient_consultations 
-                        (session_id, consultation_date, status)
-                    VALUES 
-                        (%s, %s, %s)
-                    RETURNING id
-                    """,
-                    (
-                        str(session_uuid),
-                        datetime.now(),  # Usamos consultation_date en lugar de created_at
-                        'FEEDBACK_ONLY'  # Estado especial para feedback sin consulta completa
-                    )
-                )
-                consultation_id = cursor.fetchone()[0]
-                conn.commit()
-                logger.info(f"✅ Entrada mínima creada (ID: {consultation_id}) para feedback")
-            except Exception as create_error:
-                logger.error(f"❌ Error creando entrada mínima: {str(create_error)}")
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No se encontró la consulta y no se pudo crear una entrada mínima: {feedback.session_id}"
-                )
-        else:
-            consultation_id = consultation_data[0]
-            logger.info(f"✅ Consulta encontrada (ID: {consultation_id})")
+        if not consultation_exists:
+            logger.warning(f"⚠️ No existe consulta para el session_id: {session_uuid}")
+            raise HTTPException(
+                status_code=404,
+                detail="Debe completar la consulta antes de enviar feedback"
+            )
         
-        # [Resto del código para guardar el feedback...]
-        # Verificar si ya existe feedback para esta sesión
+        # Guardar el feedback
         cursor.execute(
             """
-            SELECT id, created_at FROM treatment_feedback 
-            WHERE session_id = %s
+            INSERT INTO consultation_feedback (
+                session_id,
+                rating,
+                comments,
+                feedback_date
+            ) VALUES (
+                %s, %s, %s, %s
+            )
             """,
-            (str(session_uuid),)
-        )
-        existing_feedback = cursor.fetchone()
-        
-        if existing_feedback:
-            logger.info(f"🔄 Actualizando feedback existente (ID: {existing_feedback[0]})")
-            update_query = """
-            UPDATE treatment_feedback 
-            SET effectiveness_rating = %s,
-                side_effects = %s,
-                improvement_time = %s,
-                additional_comments = %s,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-            RETURNING id, session_id, effectiveness_rating
-            """
-            cursor.execute(update_query, (
-                feedback.effectiveness_rating,
-                feedback.side_effects,
-                feedback.improvement_time,
-                feedback.additional_comments,
-                existing_feedback[0]
-            ))
-            
-            # Obtener los datos actualizados
-            updated_feedback = cursor.fetchone()
-        else:
-            logger.info("➕ Creando nuevo feedback")
-            insert_query = """
-            INSERT INTO treatment_feedback 
-                (session_id, effectiveness_rating, side_effects, improvement_time, 
-                 additional_comments, created_at)
-            VALUES 
-                (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            RETURNING id, session_id, effectiveness_rating
-            """
-            cursor.execute(insert_query, (
+            (
                 str(session_uuid),
-                feedback.effectiveness_rating,
-                feedback.side_effects,
-                feedback.improvement_time,
-                feedback.additional_comments
-            ))
-            
-            # Obtener los datos recién insertados
-            updated_feedback = cursor.fetchone()
-        
+                feedback.rating,
+                feedback.comments,
+                datetime.now()
+            )
+        )
         conn.commit()
         
-        if updated_feedback:
-            logger.info(f"✅ Feedback {'actualizado' if existing_feedback else 'creado'} exitosamente (ID: {updated_feedback[0]})")
-            
-            # Registrar métricas adicionales
-            cursor.execute(
-                """
-                SELECT COUNT(*) FROM treatment_feedback 
-                WHERE session_id = %s
-                """,
-                (str(session_uuid),)
-            )
-            total_feedbacks = cursor.fetchone()[0]
-            logger.info(f"📊 Total feedbacks para esta sesión: {total_feedbacks}")
+        logger.info(f"✅ Feedback guardado para session_id: {session_uuid}")
+        return {"status": "success", "message": "Feedback recibido correctamente"}
         
-        print_terminal_separator()
-        print("✅ FEEDBACK GUARDADO EXITOSAMENTE")
-        print(f"📋 Session ID: {session_uuid}")
-        if updated_feedback:
-            print(f"⭐ Calificación: {updated_feedback[2]}/5")
-        print_terminal_separator()
-        
-        return {
-            "status": "success",
-            "message": "Feedback guardado correctamente",
-            "session_id": str(session_uuid),
-            "feedback_id": updated_feedback[0] if updated_feedback else None,
-            "action": "updated" if existing_feedback else "created",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except HTTPException as e:
-        logger.error(f"❌ Error HTTP en feedback: {e.detail}")
-        print_terminal_separator()
-        print(f"❌ ERROR EN FEEDBACK: {e.detail}")
-        print_terminal_separator()
-        raise e
-    except Exception as e:
-        logger.error(f"❌ Error guardando feedback: {str(e)}")
-        print_terminal_separator()
-        print(f"❌ ERROR INESPERADO: {str(e)}")
-        print_terminal_separator()
-        traceback.print_exc()
+    except psycopg2.Error as db_error:
+        logger.error(f"❌ Error de base de datos al guardar feedback: {db_error}")
+        if conn:
+            conn.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Error al guardar el feedback: {str(e)}"
+            detail="Error al guardar el feedback en la base de datos"
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"❌ Error inesperado al guardar feedback: {str(e)}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Error interno al procesar el feedback"
         )
     finally:
-        if cursor is not None:
+        if cursor:
             cursor.close()
-        if conn is not None:
+        if conn:
             conn.close()
 
 # FUNCIÓN ADICIONAL: Endpoint para verificar session_id
