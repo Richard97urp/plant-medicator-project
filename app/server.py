@@ -687,18 +687,22 @@ async def save_feedback(feedback: FeedbackRequest):
         if not consultation_data:
             logger.warning(f"⚠️ Session ID no encontrado en patient_consultations: {session_uuid}")
             
-            # Crear una entrada mínima en patient_consultations si no existe
+            # Crear una entrada mínima en patient_consultaciones usando los campos correctos
             try:
                 logger.info("🆕 Creando entrada mínima en patient_consultations")
                 cursor.execute(
                     """
                     INSERT INTO patient_consultations 
-                        (session_id, created_at)
+                        (session_id, consultation_date, status)
                     VALUES 
-                        (%s, CURRENT_TIMESTAMP)
+                        (%s, %s, %s)
                     RETURNING id
                     """,
-                    (str(session_uuid),)
+                    (
+                        str(session_uuid),
+                        datetime.now(),  # Usamos consultation_date en lugar de created_at
+                        'FEEDBACK_ONLY'  # Estado especial para feedback sin consulta completa
+                    )
                 )
                 consultation_id = cursor.fetchone()[0]
                 conn.commit()
@@ -713,6 +717,7 @@ async def save_feedback(feedback: FeedbackRequest):
             consultation_id = consultation_data[0]
             logger.info(f"✅ Consulta encontrada (ID: {consultation_id})")
         
+        # [Resto del código para guardar el feedback...]
         # Verificar si ya existe feedback para esta sesión
         cursor.execute(
             """
