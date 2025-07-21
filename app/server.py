@@ -532,7 +532,7 @@ async def chat_endpoint(
             )
 
         # =====================================================================
-        # NUEVO CÓDIGO: GUARDAR CONSULTA EN BASE DE DATOS
+        # CÓDIGO MEJORADO PARA GUARDAR CONSULTA - VERSIÓN COMPLETA
         # =====================================================================
         conn = None
         cursor = None
@@ -540,53 +540,100 @@ async def chat_endpoint(
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Definir los valores para cada campo
+            # Obtener todos los datos necesarios para la consulta
             symptoms = consultation.patient_info.get('symptoms', '')
             duration = consultation.patient_info.get('duration', '')
             allergies = consultation.patient_info.get('allergies', '')
-            recon = response.get('answer', '')  # Usamos la respuesta como recomendación
+            recommended_plant = consultation.selected_plant or ''
             
-            # Consulta SQL para insertar la consulta
+            # Preparar recomendaciones según el tipo de consulta
+            rna_recommendations = str(response.get('rna_recommendations', [])) if consultation_state == "INITIAL_CONSULTATION" else ''
+            rag_recommendations = response.get('rag_recommendations', '')
+            selected_system = response.get('selected_system', '')
+            answer = response.get('answer', '')
+            
+            # Consulta SQL completa con todos los campos
             insert_query = """
-            INSERT INTO patient_consultations 
-                (user_id, session_id, symptoms, symptoms_duration, allergies, recon, created_at)
-            VALUES 
-                (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (session_id) DO UPDATE
-            SET 
+            INSERT INTO patient_consultations (
+                user_id, 
+                session_id, 
+                symptoms, 
+                symptoms_duration, 
+                allergies, 
+                recommended_plant,
+                consultation_date,
+                status,
+                mac_recommendations,
+                rag_recommendations,
+                selected_system,
+                recon
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (session_id) DO UPDATE SET
                 symptoms = EXCLUDED.symptoms,
                 symptoms_duration = EXCLUDED.symptoms_duration,
                 allergies = EXCLUDED.allergies,
-                recon = EXCLUDED.recon
+                recommended_plant = EXCLUDED.recommended_plant,
+                status = EXCLUDED.status,
+                mac_recommendations = EXCLUDED.mac_recommendations,
+                rag_recommendations = EXCLUDED.rag_recommendations,
+                selected_system = EXCLUDED.selected_system,
+                recon = EXCLUDED.recon,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id, session_id
             """
             
-            # Ejecutar la consulta
+            # Ejecutar la consulta con todos los parámetros
             cursor.execute(insert_query, (
                 current_user,
                 consultation.session_id,
                 symptoms,
                 duration,
                 allergies,
-                recon
+                recommended_plant,
+                datetime.now(),  # consultation_date
+                consultation_state,  # status
+                rna_recommendations,  # mac_recommendations
+                rag_recommendations,
+                selected_system,
+                answer  # recon
             ))
             
+            # Obtener los datos insertados/actualizados
+            result = cursor.fetchone()
             conn.commit()
-            logger.info(f"✅ Consulta guardada en patient_consultations: {consultation.session_id}")
             
+            if result:
+                logger.info(f"✅ Consulta guardada correctamente. ID: {result[0]}, Session ID: {result[1]}")
+            else:
+                logger.warning("⚠️  Consulta guardada pero no se obtuvieron datos de retorno")
+            
+        except psycopg2.Error as db_error:
+            logger.error(f"❌ Error de base de datos al guardar consulta: {db_error}")
+            conn.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error crítico al guardar la consulta en la base de datos: {db_error}"
+            )
         except Exception as e:
-            logger.error(f"❌ Error guardando consulta: {str(e)}")
-            # No interrumpir el flujo principal si falla el guardado
-            # Podrías agregar aquí un sistema de reintentos o notificaciones
+            logger.error(f"❌ Error inesperado al guardar consulta: {str(e)}")
+            if conn:
+                conn.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al guardar la consulta: {str(e)}"
+            )
         finally:
             if cursor:
                 cursor.close()
             if conn:
                 conn.close()
         # =====================================================================
-        # FIN DEL NUEVO CÓDIGO
+        # FIN DEL CÓDIGO MEJORADO
         # =====================================================================
         
-        logger.info("✅ CONSULTA PROCESADA EXITOSAMENTE")
+        logger.info("✅ CONSULTA PROCESADA Y GUARDADA EXITOSAMENTE")
         return response
         
     except HTTPException as e:
