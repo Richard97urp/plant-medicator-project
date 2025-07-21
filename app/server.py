@@ -568,11 +568,10 @@ async def save_feedback(feedback: FeedbackRequest):
                 detail="Invalid session_id format"
             )
         
-        # Usar la función centralizada de conexión
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # CAMBIO: consultations -> patient_consultations
+        # PRIMERO: Verificar si existe la consulta
         cursor.execute(
             """
             SELECT session_id FROM patient_consultations 
@@ -584,7 +583,7 @@ async def save_feedback(feedback: FeedbackRequest):
         consultation_exists = cursor.fetchone()
         
         if not consultation_exists:
-            logger.warning(f"⚠️  Session ID no encontrado en patient_consultations: {session_uuid}")
+            logger.warning(f"⚠️ Session ID no encontrado en patient_consultations: {session_uuid}")
             raise HTTPException(
                 status_code=404,
                 detail=f"No se encontró una consulta con el session_id: {feedback.session_id}"
