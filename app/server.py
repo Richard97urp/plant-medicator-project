@@ -532,7 +532,7 @@ async def chat_endpoint(
             )
 
         # =====================================================================
-        # CÓDIGO MEJORADO PARA GUARDAR CONSULTA - VERSIÓN COMPLETA
+        # CÓDIGO CORREGIDO PARA GUARDAR CONSULTA (VERSIÓN FINAL)
         # =====================================================================
         conn = None
         cursor = None
@@ -540,19 +540,13 @@ async def chat_endpoint(
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Obtener todos los datos necesarios para la consulta
+            # Obtener datos para guardar (ajustados a tu esquema real)
             symptoms = consultation.patient_info.get('symptoms', '')
             duration = consultation.patient_info.get('duration', '')
             allergies = consultation.patient_info.get('allergies', '')
             recommended_plant = consultation.selected_plant or ''
             
-            # Preparar recomendaciones según el tipo de consulta
-            rna_recommendations = str(response.get('rna_recommendations', [])) if consultation_state == "INITIAL_CONSULTATION" else ''
-            rag_recommendations = response.get('rag_recommendations', '')
-            selected_system = response.get('selected_system', '')
-            answer = response.get('answer', '')
-            
-            # Consulta SQL completa con todos los campos
+            # Consulta SQL ACTUALIZADA con solo las columnas que existen
             insert_query = """
             INSERT INTO patient_consultations (
                 user_id, 
@@ -563,12 +557,11 @@ async def chat_endpoint(
                 recommended_plant,
                 consultation_date,
                 status,
-                mac_recommendations,
+                rna_recommendations,
                 rag_recommendations,
-                selected_system,
-                recon
+                selected_system
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT (session_id) DO UPDATE SET
                 symptoms = EXCLUDED.symptoms,
@@ -576,15 +569,19 @@ async def chat_endpoint(
                 allergies = EXCLUDED.allergies,
                 recommended_plant = EXCLUDED.recommended_plant,
                 status = EXCLUDED.status,
-                mac_recommendations = EXCLUDED.mac_recommendations,
+                rna_recommendations = EXCLUDED.rna_recommendations,
                 rag_recommendations = EXCLUDED.rag_recommendations,
                 selected_system = EXCLUDED.selected_system,
-                recon = EXCLUDED.recon,
-                updated_at = CURRENT_TIMESTAMP
-            RETURNING id, session_id
+                consultation_date = EXCLUDED.consultation_date
+            RETURNING id
             """
             
-            # Ejecutar la consulta con todos los parámetros
+            # Preparar recomendaciones RNA/RAG
+            rna_recommendations = str(response.get('rna_recommendations', [])) if consultation_state == "INITIAL_CONSULTATION" else ''
+            rag_recommendations = response.get('rag_recommendations', '')
+            selected_system = response.get('selected_system', '')
+            
+            # Ejecutar la consulta
             cursor.execute(insert_query, (
                 current_user,
                 consultation.session_id,
@@ -593,28 +590,28 @@ async def chat_endpoint(
                 allergies,
                 recommended_plant,
                 datetime.now(),  # consultation_date
-                consultation_state,  # status
-                rna_recommendations,  # mac_recommendations
+                consultation_state,
+                rna_recommendations,
                 rag_recommendations,
-                selected_system,
-                answer  # recon
+                selected_system
             ))
             
-            # Obtener los datos insertados/actualizados
+            # Verificar que se insertó correctamente
             result = cursor.fetchone()
             conn.commit()
             
             if result:
-                logger.info(f"✅ Consulta guardada correctamente. ID: {result[0]}, Session ID: {result[1]}")
+                logger.info(f"✅ Consulta guardada correctamente. ID: {result[0]}")
             else:
-                logger.warning("⚠️  Consulta guardada pero no se obtuvieron datos de retorno")
+                logger.warning("⚠️ Consulta guardada pero no se obtuvieron datos de retorno")
             
         except psycopg2.Error as db_error:
             logger.error(f"❌ Error de base de datos al guardar consulta: {db_error}")
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise HTTPException(
                 status_code=500,
-                detail=f"Error crítico al guardar la consulta en la base de datos: {db_error}"
+                detail="Error al guardar la consulta en la base de datos"
             )
         except Exception as e:
             logger.error(f"❌ Error inesperado al guardar consulta: {str(e)}")
@@ -622,7 +619,7 @@ async def chat_endpoint(
                 conn.rollback()
             raise HTTPException(
                 status_code=500,
-                detail=f"Error al guardar la consulta: {str(e)}"
+                detail="Error interno al procesar la consulta"
             )
         finally:
             if cursor:
@@ -630,10 +627,10 @@ async def chat_endpoint(
             if conn:
                 conn.close()
         # =====================================================================
-        # FIN DEL CÓDIGO MEJORADO
+        # FIN DEL CÓDIGO CORREGIDO
         # =====================================================================
         
-        logger.info("✅ CONSULTA PROCESADA Y GUARDADA EXITOSAMENTE")
+        logger.info("✅ CONSULTA PROCESADA EXITOSAMENTE")
         return response
         
     except HTTPException as e:
