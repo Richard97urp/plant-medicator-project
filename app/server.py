@@ -692,7 +692,7 @@ async def save_feedback(feedback: FeedbackRequest, current_user: str = Depends(g
                 detail="No se encontró la consulta o no tienes permiso para enviar feedback"
             )
         
-        # Guardar el feedback en la tabla treatment_feedback
+        # Guardar el feedback en la tabla treatment_feedback (usando created_at en lugar de feedback_date)
         cursor.execute(
             """
             INSERT INTO treatment_feedback (
@@ -701,7 +701,7 @@ async def save_feedback(feedback: FeedbackRequest, current_user: str = Depends(g
                 side_effects,
                 improvement_time,
                 additional_comments,
-                feedback_date
+                created_at
             ) VALUES (
                 %s, %s, %s, %s, %s, %s
             )
