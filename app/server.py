@@ -527,7 +527,7 @@ async def chat_endpoint(
             )
 
         # =====================================================================
-        # CÓDIGO CORREGIDO PARA GUARDAR CONSULTA - VERSIÓN FINAL
+        # CÓDIGO MEJORADO PARA GUARDAR CONSULTA - VERSIÓN DEFINITIVA
         # =====================================================================
         if consultation_state == "PLANT_SELECTION":
             conn = None
@@ -536,63 +536,47 @@ async def chat_endpoint(
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 
-                # Obtener datos para guardar
-                symptoms = consultation.patient_info.get('symptoms', '')
-                duration = consultation.patient_info.get('duration', '')
-                allergies = consultation.patient_info.get('allergies', '')
-                recommended_plant = consultation.selected_plant or ''
+                # Verificar estructura de la tabla primero
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'patient_consultations'
+                """)
+                columns = [row[0] for row in cursor.fetchall()]
                 
-                # Preparar recomendaciones RNA/RAG
-                rna_recommendations = str(response.get('rna_recommendations', []))
-                rag_recommendations = response.get('rag_recommendations', '')
-                selected_system = response.get('selected_system', '')
+                # Datos a guardar
+                data = {
+                    'user_id': current_user,
+                    'session_id': consultation.session_id,
+                    'symptoms': consultation.patient_info.get('symptoms', ''),
+                    'symptoms_duration': consultation.patient_info.get('duration', ''),
+                    'allergies': consultation.patient_info.get('allergies', ''),
+                    'recommended_plant': consultation.selected_plant or '',
+                    'consultation_date': datetime.now(),
+                    'status': consultation_state,
+                    'rna_recommendations': str(response.get('rna_recommendations', [])),
+                    'rag_recommendations': response.get('rag_recommendations', ''),
+                    'selected_system': response.get('selected_system', '')
+                }
                 
-                # Consulta SQL CORREGIDA (typo en consultation_date)
-                insert_query = """
-                INSERT INTO patient_consultations (
-                    user_id, 
-                    session_id, 
-                    symptoms, 
-                    symptoms_duration, 
-                    allergies, 
-                    recommended_plant,
-                    consultation_date,
-                    status,
-                    rna_recommendations,
-                    rag_recommendations,
-                    selected_system
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
+                # Filtrar solo las columnas que existen
+                existing_columns = [col for col in data.keys() if col in columns]
+                filtered_data = {k: data[k] for k in existing_columns}
+                
+                # Construir consulta dinámica
+                columns_str = ', '.join(existing_columns)
+                values_str = ', '.join(['%s'] * len(existing_columns))
+                set_str = ', '.join([f"{col} = EXCLUDED.{col}" for col in existing_columns])
+                
+                query = f"""
+                INSERT INTO patient_consultations ({columns_str})
+                VALUES ({values_str})
                 ON CONFLICT (session_id) DO UPDATE SET
-                    symptoms = EXCLUDED.symptoms,
-                    symptoms_duration = EXCLUDED.symptoms_duration,
-                    allergies = EXCLUDED.allergies,
-                    recommended_plant = EXCLUDED.recommended_plant,
-                    status = EXCLUDED.status,
-                    rna_recommendations = EXCLUDED.rna_recommendations,
-                    rag_recommendations = EXCLUDED.rag_recommendations,
-                    selected_system = EXCLUDED.selected_system,
-                    consultation_date = EXCLUDED.consultation_date
+                    {set_str}
                 RETURNING id
                 """
                 
-                # Ejecutar la consulta
-                cursor.execute(insert_query, (
-                    current_user,
-                    consultation.session_id,
-                    symptoms,
-                    duration,
-                    allergies,
-                    recommended_plant,
-                    datetime.now(),
-                    consultation_state,
-                    rna_recommendations,
-                    rag_recommendations,
-                    selected_system
-                ))
-                
-                # Verificar que se insertó correctamente
+                cursor.execute(query, tuple(filtered_data.values()))
                 result = cursor.fetchone()
                 conn.commit()
                 
@@ -602,12 +586,12 @@ async def chat_endpoint(
                     logger.warning("⚠️ Consulta guardada pero no se obtuvieron datos de retorno")
                 
             except psycopg2.Error as db_error:
-                logger.error(f"❌ Error de base de datos al guardar consulta: {db_error}")
+                logger.error(f"❌ Error de PostgreSQL: {db_error.pgerror}")
                 if conn:
                     conn.rollback()
                 raise HTTPException(
                     status_code=500,
-                    detail="Error al guardar la consulta en la base de datos"
+                    detail=f"Error de base de datos: {db_error.pgerror}"
                 )
             except Exception as e:
                 logger.error(f"❌ Error inesperado al guardar consulta: {str(e)}")
@@ -625,7 +609,7 @@ async def chat_endpoint(
         else:
             logger.info("ℹ️ Consulta en estado INITIAL_CONSULTATION - No se guarda en DB todavía")
         # =====================================================================
-        # FIN DEL CÓDIGO CORREGIDO
+        # FIN DEL CÓDIGO MEJORADO
         # =====================================================================
 
         logger.info("✅ CONSULTA PROCESADA EXITOSAMENTE")
