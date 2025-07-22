@@ -655,7 +655,7 @@ async def chat_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/feedback")
-async def save_feedback(feedback: FeedbackRequest):
+async def save_feedback(feedback: FeedbackRequest, current_user: str = Depends(get_current_user)):
     conn = None
     cursor = None
     try:
@@ -672,55 +672,68 @@ async def save_feedback(feedback: FeedbackRequest):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Verificar si existe la consulta
+        # Verificar si existe la consulta y pertenece al usuario actual
         cursor.execute(
             """
-            SELECT id FROM patient_consultations 
-            WHERE session_id = %s
+            SELECT pc.id 
+            FROM patient_consultations pc
+            JOIN personal_information pi ON pc.user_id = pi.id
+            WHERE pc.session_id = %s AND pi.username = %s
             LIMIT 1
             """,
-            (str(session_uuid),)
+            (str(session_uuid), current_user)
         )
         consultation_exists = cursor.fetchone()
         
         if not consultation_exists:
-            logger.warning(f"⚠️ No existe consulta para el session_id: {session_uuid}")
+            logger.warning(f"⚠️ No existe consulta para el session_id: {session_uuid} o no pertenece al usuario")
             raise HTTPException(
                 status_code=404,
-                detail="Debe completar la consulta antes de enviar feedback"
+                detail="No se encontró la consulta o no tienes permiso para enviar feedback"
             )
         
-        # Guardar el feedback
+        # Guardar el feedback en la tabla treatment_feedback
         cursor.execute(
             """
-            INSERT INTO consultation_feedback (
+            INSERT INTO treatment_feedback (
                 session_id,
-                rating,
-                comments,
+                effectiveness_rating,
+                side_effects,
+                improvement_time,
+                additional_comments,
                 feedback_date
             ) VALUES (
-                %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s
             )
+            RETURNING id
             """,
             (
                 str(session_uuid),
-                feedback.rating,
-                feedback.comments,
+                feedback.effectiveness_rating,
+                feedback.side_effects,
+                feedback.improvement_time,
+                feedback.additional_comments,
                 datetime.now()
             )
         )
+        
+        feedback_id = cursor.fetchone()[0]
         conn.commit()
         
-        logger.info(f"✅ Feedback guardado para session_id: {session_uuid}")
-        return {"status": "success", "message": "Feedback recibido correctamente"}
+        logger.info(f"✅ Feedback guardado exitosamente. ID: {feedback_id} para session_id: {session_uuid}")
+        return {
+            "status": "success", 
+            "message": "Feedback recibido correctamente",
+            "feedback_id": feedback_id
+        }
         
     except psycopg2.Error as db_error:
-        logger.error(f"❌ Error de base de datos al guardar feedback: {db_error}")
+        logger.error(f"❌ Error de PostgreSQL al guardar feedback: {db_error}")
         if conn:
             conn.rollback()
         raise HTTPException(
             status_code=500,
-            detail="Error al guardar el feedback en la base de datos"
+            detail=f"Error de base de datos al guardar feedback: {db_error.pgerror}"
         )
     except HTTPException as e:
         raise e
@@ -730,7 +743,7 @@ async def save_feedback(feedback: FeedbackRequest):
             conn.rollback()
         raise HTTPException(
             status_code=500,
-            detail="Error interno al procesar el feedback"
+            detail=f"Error interno al procesar el feedback: {str(e)}"
         )
     finally:
         if cursor:
