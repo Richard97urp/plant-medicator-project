@@ -867,7 +867,13 @@ async def register_user(user: UserRegistration):
         
         logger.info(f"📝 Registrando usuario: {user.username} ({user.email})")
         
-        # Verificaciones de usuario existente
+        # Verificar DNI primero ya que es el error real
+        cursor.execute("SELECT dni FROM personal_information WHERE dni = %s", (user.dni,))
+        if cursor.fetchone():
+            logger.warning(f"⚠️  DNI ya existe: {user.dni}")
+            raise HTTPException(status_code=400, detail="El DNI ya está registrado")
+            
+        # Luego verificar otros campos
         cursor.execute("SELECT username FROM personal_information WHERE username = %s", (user.username,))
         if cursor.fetchone():
             logger.warning(f"⚠️  Username ya existe: {user.username}")
@@ -877,11 +883,6 @@ async def register_user(user: UserRegistration):
         if cursor.fetchone():
             logger.warning(f"⚠️  Email ya existe: {user.email}")
             raise HTTPException(status_code=400, detail="El correo electrónico ya está registrado")
-            
-        cursor.execute("SELECT dni FROM personal_information WHERE dni = %s", (user.dni,))
-        if cursor.fetchone():
-            logger.warning(f"⚠️  DNI ya existe: {user.dni}")
-            raise HTTPException(status_code=400, detail="El DNI ya está registrado")
             
         cursor.execute("SELECT phone_number FROM personal_information WHERE phone_number = %s", (user.phoneNumber,))
         if cursor.fetchone():
