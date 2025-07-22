@@ -222,14 +222,21 @@ def get_previous_recommendations_from_session(session_id: str) -> Dict[str, Any]
 def validate_plant_selection(selected_plant: str, session_id: str) -> tuple[bool, str]:
     """
     Valida que la planta seleccionada esté en las opciones previas
+    Versión corregida para manejar correctamente los UUID
     """
     if not session_id:
         return False, "Session ID requerido para validación"
     
+    # Primero validar que el session_id sea un UUID válido
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        return False, "Session ID inválido (no es un UUID válido)"
+    
     previous_recs = get_previous_recommendations_from_session(session_id)
     
     if not previous_recs:
-        logger.warning(f"⚠️  No se encontraron recomendaciones previas para session: {session_id}")
+        logger.warning(f"⚠️ No se encontraron recomendaciones previas para session: {session_id}")
         return True, "Validación omitida - no hay recomendaciones previas"
     
     # Verificar en recomendaciones RAG (formato texto)
@@ -243,7 +250,7 @@ def validate_plant_selection(selected_plant: str, session_id: str) -> tuple[bool
         return True, f"Planta '{selected_plant}' encontrada en recomendaciones RNA previas"
     
     return False, f"Planta '{selected_plant}' no encontrada en opciones previas"
-
+    
 def print_consultation_header(state: str, session_id: str, selected_plant: Optional[str] = None):
     """
     Imprime el encabezado apropiado según el estado de la consulta
@@ -348,6 +355,7 @@ def print_detailed_preparation_summary(selected_plant: str, response: Dict[str, 
 async def get_user_data_from_db(username: str) -> Optional[Dict[str, Any]]:
     """
     Recupera los datos del usuario desde la base de datos usando el username
+    Versión corregida para manejar correctamente los UUID
     """
     conn = None
     cursor = None
@@ -357,7 +365,7 @@ async def get_user_data_from_db(username: str) -> Optional[Dict[str, Any]]:
         
         # Consulta para obtener datos del usuario
         query = """
-        SELECT full_name, email, username, dni, phone_number, age, gender, 
+        SELECT id, full_name, email, username, dni, phone_number, age, gender, 
                weight, height, zone, occupation, education_level
         FROM personal_information 
         WHERE username = %s
@@ -367,25 +375,26 @@ async def get_user_data_from_db(username: str) -> Optional[Dict[str, Any]]:
         result = cursor.fetchone()
         
         if result:
-            # Mapear resultado a diccionario
+            # Mapear resultado a diccionario (incluyendo el ID/UUID)
             user_data = {
-                'full_name': result[0],
-                'email': result[1],
-                'username': result[2],
-                'dni': result[3],
-                'phone_number': result[4],
-                'age': result[5],
-                'gender': result[6],
-                'weight': result[7],
-                'height': result[8],
-                'zone': result[9],
-                'occupation': result[10],
-                'education_level': result[11]
+                'id': result[0],  # UUID del usuario
+                'full_name': result[1],
+                'email': result[2],
+                'username': result[3],
+                'dni': result[4],
+                'phone_number': result[5],
+                'age': result[6],
+                'gender': result[7],
+                'weight': result[8],
+                'height': result[9],
+                'zone': result[10],
+                'occupation': result[11],
+                'education_level': result[12]
             }
             logger.info(f"📋 Datos del usuario {username} recuperados exitosamente")
             return user_data
         else:
-            logger.warning(f"⚠️  Usuario {username} no encontrado en la base de datos")
+            logger.warning(f"⚠️ Usuario {username} no encontrado en la base de datos")
             return None
             
     except Exception as e:
@@ -468,8 +477,6 @@ async def chat_endpoint(
                 )
             else:
                 logger.info(f"✅ Validación exitosa: {validation_msg}")
-        else:
-            logger.info("🔍 Iniciando análisis dual RNA + RAG")
         
         # Recuperar información del usuario desde la base de datos
         user_id = consultation.patient_info.get('user_id')
@@ -527,7 +534,7 @@ async def chat_endpoint(
             )
 
         # =====================================================================
-        # CÓDIGO MEJORADO PARA GUARDAR CONSULTA - VERSIÓN DEFINITIVA
+        # CÓDIGO MEJORADO PARA GUARDAR CONSULTA - VERSIÓN CORREGIDA
         # =====================================================================
         if consultation_state == "PLANT_SELECTION":
             conn = None
@@ -536,7 +543,22 @@ async def chat_endpoint(
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 
-                # Verificar estructura de la tabla primero
+                # Obtener el ID real del usuario (UUID) desde la base de datos
+                cursor.execute(
+                    "SELECT id FROM personal_information WHERE username = %s",
+                    (current_user,)
+                )
+                user_id_result = cursor.fetchone()
+                
+                if not user_id_result:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Usuario no encontrado en la base de datos"
+                    )
+                
+                real_user_id = user_id_result[0]
+                
+                # Verificar estructura de la tabla
                 cursor.execute("""
                     SELECT column_name 
                     FROM information_schema.columns 
@@ -544,9 +566,9 @@ async def chat_endpoint(
                 """)
                 columns = [row[0] for row in cursor.fetchall()]
                 
-                # Datos a guardar
+                # Datos a guardar (usando el UUID real del usuario)
                 data = {
-                    'user_id': current_user,
+                    'user_id': real_user_id,  # Usamos el UUID real aquí
                     'session_id': consultation.session_id,
                     'symptoms': consultation.patient_info.get('symptoms', ''),
                     'symptoms_duration': consultation.patient_info.get('duration', ''),
@@ -575,6 +597,9 @@ async def chat_endpoint(
                     {set_str}
                 RETURNING id
                 """
+                
+                logger.info(f"📝 Ejecutando consulta SQL: {query}")
+                logger.info(f"📝 Con valores: {filtered_data.values()}")
                 
                 cursor.execute(query, tuple(filtered_data.values()))
                 result = cursor.fetchone()
@@ -609,7 +634,7 @@ async def chat_endpoint(
         else:
             logger.info("ℹ️ Consulta en estado INITIAL_CONSULTATION - No se guarda en DB todavía")
         # =====================================================================
-        # FIN DEL CÓDIGO MEJORADO
+        # FIN DEL CÓDIGO CORREGIDO
         # =====================================================================
 
         logger.info("✅ CONSULTA PROCESADA EXITOSAMENTE")
