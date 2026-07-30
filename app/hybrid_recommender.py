@@ -1,423 +1,613 @@
+"""
+hybrid_recommender.py - VERSIÓN CORREGIDA
+✅ Maneja estructura directa desde RAG (sin doble parseo)
+✅ Compatible con ambos formatos (estructura o texto)
+"""
+
 from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
-import os
-import json
 import logging
-from sklearn.metrics.pairwise import cosine_similarity
-import random
+import re
+from app.ml.recommender_model import RecommenderModel
+import asyncio
+import os
+import json 
 
-# Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class SimpleNeuralNetwork:
-    """Una implementación simple de red neuronal para recomendación de plantas"""
+class IntelligentHybridRecommender:
+    """
+    🧠 Sistema Híbrido CORREGIDO - Sin doble parseo
     
-    def __init__(self, input_size=15, hidden_size=8, output_size=25):
-        # Inicializar con pesos aleatorios para demostración
-        np.random.seed(42)  # Para reproducibilidad
-        self.weights_input_hidden = np.random.randn(input_size, hidden_size) * 0.5
-        self.weights_hidden_output = np.random.randn(hidden_size, output_size) * 0.5
-        self.bias_hidden = np.random.randn(hidden_size) * 0.1
-        self.bias_output = np.random.randn(output_size) * 0.1
-        self.plant_mapping = {}
-        self.plant_properties = {}
-        self.load_plant_data()
+    FLUJO CORRECTO:
+    1. RNA predice plantas (fuente primaria)
+    2. RAG predice plantas (fuente primaria) ✅ Estructura directa
+    3. Validador de seguridad verifica contraindicaciones
+    4. Fusión inteligente entre RNA y RAG
+    """
+    
+    def __init__(self, db_config: Dict[str, Any]):
+        logger.info("🧠 Inicializando Hybrid Recommender SIN DOBLE PARSEO")
         
-    def load_plant_data(self):
-        """Carga el mapeo de índices a nombres de plantas y sus propiedades"""
+        # Instanciar RNA
+        self.rna_model = RecommenderModel(db_config)
+        
+        # Entrenar RNA
         try:
-            # Lista expandida de plantas medicinales peruanas con propiedades
-            plants_data = {
-                0: {"name": "muña", "properties": ["digestivo", "respiratorio", "antimicrobiano"]},
-                1: {"name": "uña de gato", "properties": ["antiinflamatorio", "inmunológico", "articular"]},
-                2: {"name": "maca", "properties": ["energético", "hormonal", "adaptógeno"]},
-                3: {"name": "sangre de grado", "properties": ["cicatrizante", "antimicrobiano", "piel"]},
-                4: {"name": "hercampuri", "properties": ["digestivo", "hepático", "colesterol"]},
-                5: {"name": "chanca piedra", "properties": ["renal", "diurético", "cálculos"]},
-                6: {"name": "sacha inchi", "properties": ["omega3", "cardiovascular", "cerebral"]},
-                7: {"name": "camu camu", "properties": ["vitamina_c", "antioxidante", "inmunológico"]},
-                8: {"name": "tara", "properties": ["astringente", "antimicrobiano", "digestivo"]},
-                9: {"name": "yacón", "properties": ["digestivo", "diabético", "prebiótico"]},
-                10: {"name": "matico", "properties": ["cicatrizante", "digestivo", "antimicrobiano"]},
-                11: {"name": "coca", "properties": ["estimulante", "digestivo", "mal_altura"]},
-                12: {"name": "aloe vera", "properties": ["cicatrizante", "piel", "digestivo"]},
-                13: {"name": "jengibre", "properties": ["digestivo", "antiinflamatorio", "náuseas"]},
-                14: {"name": "caléndula", "properties": ["cicatrizante", "antiinflamatorio", "piel"]},
-                15: {"name": "árbol de té", "properties": ["antimicrobiano", "piel", "fungicida"]},
-                16: {"name": "eucalipto", "properties": ["respiratorio", "descongestionante", "antimicrobiano"]},
-                17: {"name": "boldo", "properties": ["digestivo", "hepático", "colagogo"]},
-                18: {"name": "valeriana", "properties": ["sedante", "ansiolítico", "relajante"]},
-                19: {"name": "manzanilla", "properties": ["digestivo", "sedante", "antiinflamatorio"]},
-                20: {"name": "toronjil", "properties": ["sedante", "digestivo", "antiespasmódico"]},
-                21: {"name": "hierba luisa", "properties": ["digestivo", "sedante", "carminativo"]},
-                22: {"name": "paico", "properties": ["antiparasitario", "digestivo", "carminativo"]},
-                23: {"name": "llantén", "properties": ["cicatrizante", "respiratorio", "antiinflamatorio"]},
-                24: {"name": "cola de caballo", "properties": ["diurético", "remineralizante", "piel"]}
-            }
-            
-            # Crear mapeos
-            for idx, data in plants_data.items():
-                self.plant_mapping[idx] = data["name"]
-                self.plant_properties[data["name"]] = data["properties"]
-                
-            logger.info(f"Loaded {len(self.plant_mapping)} plants into the neural network")
+            logger.info("Entrenando RNA...")
+            history, evaluation = self.rna_model.train(epochs=50, batch_size=32)
+            if evaluation:
+                logger.info(f"RNA entrenada. Loss: {evaluation[0]:.4f}, Accuracy: {evaluation[1]:.4f}")
         except Exception as e:
-            logger.error(f"Error loading plant mapping: {e}")
-            # Mapeo básico de respaldo
-            self.plant_mapping = {
-                0: "muña", 1: "uña de gato", 2: "maca", 
-                3: "sangre de grado", 4: "hercampuri"
-            }
+            logger.warning(f"No se pudo entrenar RNA: {e}")
+        
+        # Base de conocimiento para seguridad
+        self._init_safety_knowledge_base()
+        
+        # Inicializar RAG
+        self.rag_module = None
+        self.RAG_AVAILABLE = False
+        self._init_rag_module()
     
-    def preprocess_symptoms(self, symptoms: str, patient_info: Dict[str, Any] = None) -> np.ndarray:
-        """
-        Preprocesa los síntomas y datos del paciente para crear un vector de características
-        """
-        # Lista expandida de palabras clave para vectorización
-        symptom_keywords = [
-            "dolor", "fiebre", "inflamación", "tos", "digestión", 
-            "fatiga", "piel", "cabeza", "estómago", "respiratorio",
-            "gripe", "resfriado", "náuseas", "articulaciones", "estrés"
-        ]
-        
-        # Crear vector de características basado en presencia de palabras clave
-        feature_vector = np.zeros(len(symptom_keywords))
-        symptoms_lower = symptoms.lower()
-        
-        # Análisis de síntomas
-        for i, keyword in enumerate(symptom_keywords):
-            if keyword in symptoms_lower:
-                feature_vector[i] = 1.0
-            # Buscar sinónimos y variaciones
-            elif self._check_synonyms(keyword, symptoms_lower):
-                feature_vector[i] = 0.8
-                
-        # Añadir información del paciente si está disponible
-        if patient_info:
-            # Factores de edad (normalizado)
-            if 'age' in patient_info:
-                age_factor = min(patient_info['age'] / 100.0, 1.0)
-                feature_vector = np.append(feature_vector, age_factor)
+    def _init_safety_knowledge_base(self):
+        """Base de conocimiento solo para validación de seguridad"""
+        self.safety_constraints = {
+            'manzanilla': {
+                'age_range': (0, 100),
+                'contraindications': ['embarazo avanzado', 'alergia a asteráceas']
+            },
+            'menta': {
+                'age_range': (3, 100),
+                'contraindications': ['reflujo gastroesofágico', 'niños menores 3 años']
+            },
+            'hierba luisa': {
+                'age_range': (2, 100),
+                'contraindications': ['embarazo', 'lactancia']
+            },
+            'eucalipto': {
+                'age_range': (2, 100),
+                'contraindications': ['epilepsia', 'hipertensión severa']
+            },
+            'muña': {
+                'age_range': (2, 100),
+                'contraindications': ['embarazo']
+            },
+            'uña de gato': {
+                'age_range': (12, 100),
+                'contraindications': ['embarazo', 'trasplantados', 'autoinmunes', 'niños']
+            },
+            'salvia': {
+                'age_range': (12, 100),
+                'contraindications': ['embarazo', 'lactancia', 'epilepsia']
+            }
+        }
+    
+    def _init_rag_module(self):
+        """Inicializa módulo RAG"""
+        try:
+            from app import rag_chain
+            
+            if hasattr(rag_chain, 'optimized_rag') and hasattr(rag_chain.optimized_rag, 'is_available'):
+                self.rag_module = rag_chain
+                self.rag_instance = rag_chain.optimized_rag
+                self.RAG_AVAILABLE = rag_chain.optimized_rag.is_available
+                logger.info(f"✅ RAG disponible: {self.RAG_AVAILABLE}")
             else:
-                feature_vector = np.append(feature_vector, 0.3)  # Valor por defecto
-        else:
-            feature_vector = np.append(feature_vector, 0.3)
-                
-        return feature_vector[:self.weights_input_hidden.shape[0]]  # Asegurar tamaño correcto
-    
-    def _check_synonyms(self, keyword: str, text: str) -> bool:
-        """Verifica sinónimos y variaciones de palabras clave"""
-        synonyms = {
-            "dolor": ["duele", "molestia", "dolencia"],
-            "fiebre": ["temperatura", "calentura", "febril"],
-            "inflamación": ["hinchazón", "inflamado", "irritación"],
-            "tos": ["toser", "tusígeno"],
-            "digestión": ["estomacal", "intestinal", "gastrointestinal"],
-            "fatiga": ["cansancio", "agotamiento", "debilidad"],
-            "piel": ["cutáneo", "dermatitis", "eccema"],
-            "cabeza": ["cefalea", "migraña", "jaqueca"],
-            "respiratorio": ["pulmones", "bronquios", "pulmonar"]
-        }
-        
-        if keyword in synonyms:
-            return any(syn in text for syn in synonyms[keyword])
-        return False
-    
-    def predict(self, symptoms: str, patient_info: Dict[str, Any] = None) -> List[Tuple[str, float]]:
-        """
-        Predice las plantas más relevantes para los síntomas dados
-        """
-        try:
-            # Preprocesar síntomas
-            input_vector = self.preprocess_symptoms(symptoms, patient_info)
-            
-            # Forward pass mejorado
-            hidden_layer = np.tanh(np.dot(input_vector, self.weights_input_hidden) + self.bias_hidden)
-            output_layer = 1/(1 + np.exp(-np.dot(hidden_layer, self.weights_hidden_output) + self.bias_output))
-            
-            # Aplicar ruido controlado para variabilidad
-            noise = np.random.normal(0, 0.05, output_layer.shape)
-            output_layer = np.clip(output_layer + noise, 0, 1)
-            
-            # Obtener las plantas con mayor puntuación
-            top_indices = np.argsort(output_layer)[::-1][:8]  # Top 8 para más opciones
-            
-            # Crear lista de tuplas (planta, confianza)
-            results = []
-            for idx in top_indices:
-                if idx in self.plant_mapping:
-                    plant_name = self.plant_mapping[idx]
-                    confidence = float(output_layer[idx])
-                    
-                    # Ajustar confianza basada en relevancia de síntomas
-                    relevance_boost = self._calculate_symptom_relevance(plant_name, symptoms)
-                    adjusted_confidence = min(confidence + relevance_boost, 1.0)
-                    
-                    results.append((plant_name, round(adjusted_confidence, 3)))
-            
-            logger.info(f"RNA prediction results: {results[:5]}")
-            return results
+                logger.warning("⚠️ RAG no disponible")
+                self.RAG_AVAILABLE = False
         except Exception as e:
-            logger.error(f"Error in RNA prediction: {e}")
-            # Devolver plantas por defecto con confianzas variadas
-            return [
-                ("muña", 0.782), ("manzanilla", 0.756), ("uña de gato", 0.643),
-                ("eucalipto", 0.598), ("jengibre", 0.521)
-            ]
+            logger.error(f"❌ Error inicializando RAG: {e}")
+            self.RAG_AVAILABLE = False
     
-    def _calculate_symptom_relevance(self, plant_name: str, symptoms: str) -> float:
-        """Calcula un boost de relevancia basado en la relación planta-síntoma"""
-        if plant_name not in self.plant_properties:
-            return 0.0
-            
-        properties = self.plant_properties[plant_name]
-        symptoms_lower = symptoms.lower()
-        relevance = 0.0
+    async def _normalize_patient_info(self, patient_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Normaliza información del paciente — usa LLM para duración e intensidad"""
+        normalized = patient_info.copy()
         
-        # Mapeo de propiedades a síntomas
-        property_symptom_map = {
-            "digestivo": ["estómago", "digestión", "náuseas", "intestinal"],
-            "respiratorio": ["tos", "gripe", "resfriado", "respiratorio"],
-            "antiinflamatorio": ["inflamación", "dolor", "articulaciones"],
-            "cicatrizante": ["piel", "herida", "cortadura"],
-            "sedante": ["estrés", "nervios", "ansiedad", "insomnio"]
-        }
+        normalized['age'] = int(patient_info.get('age', 30))
+        normalized['weight'] = float(patient_info.get('weight', 70.0))
+        normalized['gender'] = str(patient_info.get('gender', 'Not specified'))
+        normalized['zone'] = str(patient_info.get('zone', 'Lima'))
+        normalized['symptoms'] = str(patient_info.get('symptoms', ''))
         
-        for prop in properties:
-            if prop in property_symptom_map:
-                for symptom in property_symptom_map[prop]:
-                    if symptom in symptoms_lower:
-                        relevance += 0.1
-                        
-        return min(relevance, 0.3)  # Máximo boost de 0.3
-
-
-class HybridRecommender:
-    """
-    Sistema híbrido de recomendación que combina la red neuronal con
-    un enfoque basado en similitud de texto para recomendar plantas medicinales
-    """
+        # Causas
+        normalized['causa_ambiental'] = str(patient_info.get('causa_ambiental', ''))
+        normalized['causa_emocional'] = str(patient_info.get('causa_emocional', ''))
+        normalized['causa_dietetica'] = str(patient_info.get('causa_dietetica', ''))
+        
+        # 🔥 LLM normaliza duración e intensidad semánticamente
+        llm_norms = await self._normalize_with_llm(patient_info)
+        normalized['duration_ordinal'] = llm_norms.get('duration_ordinal', 2)
+        normalized['intensidad_sintomas'] = llm_norms.get('intensity_ordinal', 2)
+        
+        logger.info(f"📋 Paciente normalizado:")
+        logger.info(f"   - Edad: {normalized['age']} años")
+        logger.info(f"   - Síntomas: {normalized['symptoms']}")
+        logger.info(f"   - Intensidad: {normalized['intensidad_sintomas']}")
+        logger.info(f"   - Duración ordinal: {normalized['duration_ordinal']}")
+        
+        return normalized
     
-    def __init__(self):
-        logger.info("Initializing HybridRecommender")
-        self.nn_model = SimpleNeuralNetwork()
+    def _convert_duration_to_ordinal(self, duration_str: str) -> int:
+        """Convierte duración a ordinal (0-6)"""
+        if not duration_str:
+            return 2
         
-        # Diccionario expandido que mapea síntomas a plantas
-        self.symptom_plant_map = {
-            "dolor": ["uña de gato", "maca", "matico", "caléndula"],
-            "fiebre": ["eucalipto", "manzanilla", "muña", "hierba luisa"],
-            "inflamación": ["sangre de grado", "uña de gato", "caléndula", "llantén"],
-            "tos": ["eucalipto", "matico", "jengibre", "muña"],
-            "digestión": ["manzanilla", "boldo", "muña", "hierba luisa", "yacón"],
-            "piel": ["sangre de grado", "aloe vera", "caléndula", "matico"],
-            "cabeza": ["valeriana", "manzanilla", "eucalipto", "toronjil"],
-            "estómago": ["manzanilla", "yacón", "muña", "jengibre"],
-            "respiratorio": ["eucalipto", "matico", "jengibre", "muña"],
-            "gripe": ["eucalipto", "muña", "jengibre", "manzanilla"],
-            "resfriado": ["eucalipto", "jengibre", "manzanilla", "muña"],
-            "náuseas": ["jengibre", "manzanilla", "hierba luisa"],
-            "articulaciones": ["uña de gato", "maca", "caléndula"],
-            "estrés": ["valeriana", "manzanilla", "toronjil", "hierba luisa"],
-            "fatiga": ["maca", "coca", "camu camu"],
-            "renal": ["chanca piedra", "cola de caballo"],
-            "hepático": ["hercampuri", "boldo"],
-            "parasitos": ["paico", "matico"]
-        }
+        duration_lower = duration_str.lower()
+        
+        if 'hora' in duration_lower:
+            return 0
+        if '1 día' in duration_lower or '2 días' in duration_lower or '3 días' in duration_lower:
+            return 1
+        if any(d in duration_lower for d in ['4', '5', '6', '7']) and 'día' in duration_lower:
+            return 2
+        if '1 semana' in duration_lower:
+            return 2
+        if '2 semanas' in duration_lower:
+            return 3
+        if '1 mes' in duration_lower:
+            return 4
+        if '2 meses' in duration_lower or '3 meses' in duration_lower:
+            return 5
+        if 'año' in duration_lower:
+            return 6
+        
+        return 2
     
-    def get_hybrid_recommendations(self, patient_info: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_intensity_to_ordinal(self, intensity_str: str) -> int:
+        """Convierte intensidad a ordinal (0-3)"""
+        if not intensity_str:
+            return 2
+        
+        intensity_lower = intensity_str.lower()
+        
+        if 'leve' in intensity_lower:
+            return 1
+        elif 'severo' in intensity_lower or 'fuerte' in intensity_lower:
+            return 3
+        else:
+            return 2
+    
+    async def get_hybrid_recommendations_async(self, patient_info: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Método principal que retorna recomendaciones híbridas con análisis de precisión
+        🧠 MÉTODO PRINCIPAL CORREGIDO - Sin doble parseo
         """
         symptoms = patient_info.get('symptoms', '')
-        logger.info(f"🔍 Generating hybrid recommendations for: {symptoms}")
+        logger.info(f"🧠 Generando recomendaciones para: {symptoms}")
+        logger.info(f"📋 patient_info recibido completo: {json.dumps(patient_info, ensure_ascii=False, default=str)}")
+        logger.info(f"🤖 RNA entrenada: {self.rna_model.model_trained}")
+        logger.info(f"📚 RAG disponible: {self.RAG_AVAILABLE}")
         
-        # 1. Obtener recomendaciones de la red neuronal
-        rna_recommendations = self.nn_model.predict(symptoms, patient_info)
+        # Normalizar información
+        normalized_info = await self._normalize_patient_info(patient_info)
         
-        # 2. Obtener recomendaciones basadas en palabras clave  
-        keyword_recommendations = self._keyword_based_recommendations(symptoms)
+        # 🤖 PASO 1: RNA (FUENTE PRIMARIA)
+        rna_recommendations = []
+        rna_precision = 0.0
         
-        # 3. Calcular precisiones simuladas
-        rna_precision = self._calculate_rna_precision(symptoms, rna_recommendations)
-        keyword_precision = self._calculate_keyword_precision(symptoms, keyword_recommendations)
-        
-        # 4. Determinar el sistema ganador
-        if rna_precision >= keyword_precision:
-            selected_system = "RNA"
-            final_recommendations = self._format_rna_recommendations(rna_recommendations[:5])
-            selection_reason = f"RNA mostró mayor precisión ({rna_precision:.3f} vs {keyword_precision:.3f})"
+        if self.rna_model.model_trained:
+            rna_tuples = self._get_rna_predictions(normalized_info)
+            rna_recommendations = self._convert_tuples_to_dicts(rna_tuples)
+            rna_precision = self._calculate_rna_precision(rna_tuples)
+            logger.info(f"   🤖 RNA: {len(rna_recommendations)} plantas, precisión={rna_precision:.3f}")
         else:
-            selected_system = "Keyword-Based"
-            final_recommendations = self._format_keyword_recommendations(keyword_recommendations[:5])
-            selection_reason = f"Sistema basado en palabras clave mostró mayor precisión ({keyword_precision:.3f} vs {rna_precision:.3f})"
+            logger.warning("⚠️ RNA no entrenada, solo usará RAG")
         
-        # 5. Preparar respuesta completa
-        response = {
+        # 📚 PASO 2: RAG (FUENTE PRIMARIA) - 🔥 SIN DOBLE PARSEO
+        rag_recommendations = []
+        rag_precision = 0.0
+        
+        if self.RAG_AVAILABLE and self.rag_module:
+            try:
+                logger.info("🔍 Llamando a evaluate_rag_system()...")
+                
+                # 🔥 CORRECCIÓN: evaluate_rag_system ahora retorna estructura directamente
+                rag_result, rag_precision = await self.rag_module.evaluate_rag_system(normalized_info)
+                
+                logger.info(f"📦 RAG devolvió: {type(rag_result)}")
+                logger.info(f"📊 RAG precision: {rag_precision}")
+                
+                # 🔥 MANEJAR ESTRUCTURA DIRECTA (sin parseo)
+                if isinstance(rag_result, list):
+                    # ✅ Ya es una lista de diccionarios - NO PARSEAR
+                    rag_recommendations = rag_result
+                    logger.info(f"✅ RAG devolvió estructura directa: {len(rag_recommendations)} plantas")
+                    
+                    # Log de las plantas recibidas
+                    for rec in rag_recommendations:
+                        logger.info(f"   ✓ {rec['name']}: conf={rec['confidence']:.2f}")
+                    
+                elif isinstance(rag_result, str):
+                    # ⚠️ Caso legacy - Si por alguna razón aún viene texto
+                    logger.warning("⚠️ RAG devolvió texto (caso legacy), parseando...")
+                    rag_recommendations = self._parse_rag_text_if_needed(rag_result)
+                else:
+                    logger.warning(f"⚠️ RAG devolvió tipo inesperado: {type(rag_result)}")
+                
+                logger.info(f"   📚 RAG: {len(rag_recommendations)} plantas, precisión={rag_precision:.3f}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error en RAG: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        else:
+            logger.warning("⚠️ RAG no disponible, solo usará RNA")
+        
+        # 🛡️ PASO 3: VALIDACIÓN DE SEGURIDAD
+        safe_rna = self._filter_unsafe_plants(rna_recommendations, normalized_info)
+        safe_rag = self._filter_unsafe_plants(rag_recommendations, normalized_info)
+        
+        logger.info(f"   🛡️ Filtrado de seguridad:")
+        logger.info(f"      RNA: {len(rna_recommendations)} → {len(safe_rna)}")
+        logger.info(f"      RAG: {len(rag_recommendations)} → {len(safe_rag)}")
+        
+        # 🎯 PASO 4: FUSIÓN INTELIGENTE
+        final_recommendations = self._fuse_rna_rag(safe_rna, safe_rag, rna_precision, rag_precision)
+        
+        # Calcular precisión global
+        if rna_precision > 0 and rag_precision > 0:
+            global_precision = (rna_precision * 0.6 + rag_precision * 0.4)
+        elif rna_precision > 0:
+            global_precision = rna_precision
+        elif rag_precision > 0:
+            global_precision = rag_precision
+        else:
+            global_precision = 0.5
+        
+        selected_system = self._determine_system(rna_precision, rag_precision)
+        
+        logger.info(f"✅ Sistema seleccionado: {selected_system}")
+        logger.info(f"   Plantas finales: {[p['name'] for p in final_recommendations[:3]]}")
+        
+        answer = await self._format_response_with_llm(
+            final_recommendations[:3],
+            patient_info,
+            selected_system,
+            global_precision
+        )
+        return {
             "session_id": patient_info.get('session_id', ''),
             "selected_system": selected_system,
-            "selection_reason": selection_reason,
+            "selection_reason": f"Fusión RNA-RAG (precisión: {global_precision:.3f})",
             "rna_precision": round(rna_precision, 4),
-            "rag_precision": round(keyword_precision, 4),  # Usando 'rag_precision' para compatibilidad
-            "rna_recommendations": self._format_rna_recommendations(rna_recommendations[:5]),
-            "rag_recommendations": self._format_keyword_summary(keyword_recommendations[:5]),
-            "final_recommendations": final_recommendations,
-            "patient_symptoms": symptoms
+            "rag_precision": round(rag_precision, 4),
+            "intelligent_precision": round(global_precision, 4),
+            "final_recommendations": final_recommendations[:3],
+            "patient_symptoms": symptoms,
+            "rag_available": self.RAG_AVAILABLE,
+            "answer": answer
         }
-        
-        logger.info(f"✅ Hybrid analysis complete. Winner: {selected_system}")
-        return response
     
-    def _calculate_rna_precision(self, symptoms: str, recommendations: List[Tuple[str, float]]) -> float:
-        """Calcula una precisión simulada para las recomendaciones de RNA"""
-        base_precision = 0.65
+    def _parse_rag_text_if_needed(self, rag_text: str) -> List[Dict[str, Any]]:
+        """
+        🔥 PARSER DE EMERGENCIA - Solo para caso legacy
+        Busca patrón: "PLANTA_1: Nombre (Científico) | Confianza: 0.42 | Razón"
+        """
+        if not rag_text or len(rag_text) < 10:
+            logger.warning("⚠️ Texto RAG vacío")
+            return []
         
-        # Factores que afectan la precisión
-        symptom_clarity = len(symptoms.split()) / 20.0  # Más palabras = más contexto
-        avg_confidence = np.mean([conf for _, conf in recommendations]) if recommendations else 0.5
+        logger.info(f"🔍 Parseando texto RAG (primeros 200 chars): {rag_text[:200]}")
         
-        # Bonus por coherencia (plantas relacionadas)
-        coherence_bonus = self._calculate_coherence_bonus(recommendations)
+        recommendations = []
         
-        precision = base_precision + (symptom_clarity * 0.1) + (avg_confidence * 0.15) + coherence_bonus
+        # Patrón correcto para el formato actual
+        pattern = r'PLANTA_(\d+):\s+([^(]+)\s*\(([^)]+)\)\s*\|\s*Confianza:\s*([\d.]+)\s*\|\s*(.+?)(?=PLANTA_|\Z)'
         
-        # Añadir variabilidad realista
-        noise = np.random.normal(0, 0.05)
-        precision = np.clip(precision + noise, 0.4, 0.95)
+        matches = re.finditer(pattern, rag_text, re.DOTALL)
         
-        return precision
-    
-    def _calculate_keyword_precision(self, symptoms: str, recommendations: List[str]) -> float:
-        """Calcula una precisión simulada para las recomendaciones basadas en palabras clave"""
-        base_precision = 0.68
-        
-        # Factor de cobertura (cuántos síntomas son cubiertos)
-        covered_symptoms = sum(1 for keyword in self.symptom_plant_map.keys() if keyword in symptoms.lower())
-        coverage_factor = min(covered_symptoms / 5.0, 1.0)
-        
-        # Factor de diversidad de recomendaciones
-        diversity_factor = min(len(set(recommendations)) / 8.0, 1.0)
-        
-        precision = base_precision + (coverage_factor * 0.12) + (diversity_factor * 0.08)
-        
-        # Añadir variabilidad realista
-        noise = np.random.normal(0, 0.04)
-        precision = np.clip(precision + noise, 0.45, 0.92)
-        
-        return precision
-    
-    def _calculate_coherence_bonus(self, recommendations: List[Tuple[str, float]]) -> float:
-        """Calcula un bonus basado en la coherencia de las recomendaciones"""
-        if not recommendations:
-            return 0.0
+        for match in matches:
+            rank = int(match.group(1))
+            name = match.group(2).strip()
+            scientific = match.group(3).strip()
+            confidence = float(match.group(4))
+            reason = match.group(5).strip()
             
-        # Verificar si las plantas recomendadas tienen propiedades relacionadas
-        common_properties = set()
-        for plant, _ in recommendations[:3]:  # Revisar top 3
-            if plant in self.nn_model.plant_properties:
-                props = set(self.nn_model.plant_properties[plant])
-                if not common_properties:
-                    common_properties = props
-                else:
-                    common_properties = common_properties.intersection(props)
-        
-        return 0.05 if common_properties else 0.0
-    
-    def _keyword_based_recommendations(self, symptoms: str) -> List[str]:
-        """Genera recomendaciones basadas en palabras clave en los síntomas"""
-        symptoms_lower = symptoms.lower()
-        plant_scores = {}
-        
-        # Puntuar plantas basado en coincidencias de palabras clave
-        for keyword, plants in self.symptom_plant_map.items():
-            if keyword in symptoms_lower:
-                for plant in plants:
-                    plant_scores[plant] = plant_scores.get(plant, 0) + 1
-        
-        # Ordenar por puntuación y devolver lista
-        sorted_plants = sorted(plant_scores.items(), key=lambda x: x[1], reverse=True)
-        return [plant for plant, _ in sorted_plants]
-    
-    def _format_rna_recommendations(self, recommendations: List[Tuple[str, float]]) -> List[Dict[str, Any]]:
-        """Formatea las recomendaciones de RNA"""
-        formatted = []
-        for i, (plant, confidence) in enumerate(recommendations):
-            formatted.append({
-                "name": plant,
-                "scientific_name": self._get_scientific_name(plant),
-                "confidence": confidence,
-                "rank": i + 1,
-                "properties": self.nn_model.plant_properties.get(plant, [])
+            recommendations.append({
+                'name': name,
+                'scientific_name': scientific,
+                'confidence': confidence,
+                'rank': rank,
+                'reason': reason,
+                'source': 'RAG',
+                'properties': []
             })
-        return formatted
+        
+        logger.info(f"✅ Parser legacy: {len(recommendations)} plantas encontradas")
+        return recommendations
     
-    def _format_keyword_recommendations(self, recommendations: List[str]) -> List[Dict[str, Any]]:
-        """Formatea las recomendaciones basadas en palabras clave"""
-        formatted = []
-        for i, plant in enumerate(recommendations):
-            # Simular confianza basada en ranking
-            confidence = 0.9 - (i * 0.1)
-            formatted.append({
-                "name": plant,
-                "scientific_name": self._get_scientific_name(plant),
-                "confidence": round(confidence, 3),
-                "rank": i + 1,
-                "properties": self.nn_model.plant_properties.get(plant, [])
-            })
-        return formatted
-    
-    def _format_keyword_summary(self, recommendations: List[str]) -> str:
-        """Crea un resumen en texto de las recomendaciones por palabras clave"""
+    def _filter_unsafe_plants(
+        self, 
+        recommendations: List[Dict], 
+        patient_info: Dict[str, Any]
+    ) -> List[Dict]:
+        """Filtro de seguridad"""
         if not recommendations:
-            return "No se encontraron recomendaciones específicas."
+            return []
         
-        summary = f"Basado en el análisis de síntomas, se recomiendan las siguientes plantas medicinales:\n\n"
+        safe_plants = []
+        age = patient_info.get('age', 30)
+        allergies = patient_info.get('allergies', '').lower()
         
-        for i, plant in enumerate(recommendations[:5], 1):
-            scientific = self._get_scientific_name(plant)
-            properties = self.nn_model.plant_properties.get(plant, [])
-            prop_text = ", ".join(properties[:3]) if properties else "propiedades variadas"
+        for plant in recommendations:
+            plant_name = plant['name'].lower()
             
-            summary += f"{i}. **{plant.title()}** ({scientific})\n"
-            summary += f"   Propiedades: {prop_text}\n\n"
+            if plant_name not in self.safety_constraints:
+                safe_plants.append(plant)
+                continue
+            
+            safety_info = self.safety_constraints[plant_name]
+            
+            # Verificar edad
+            age_min, age_max = safety_info['age_range']
+            if not (age_min <= age <= age_max):
+                logger.warning(f"   ⚠️ {plant_name}: edad {age} fuera de rango")
+                continue
+            
+            # Verificar contraindicaciones
+            has_contraindication = False
+            for contraindication in safety_info['contraindications']:
+                if contraindication in allergies:
+                    logger.warning(f"   ⚠️ {plant_name}: contraindicación {contraindication}")
+                    has_contraindication = True
+                    break
+            
+            if not has_contraindication:
+                safe_plants.append(plant)
         
-        return summary
+        return safe_plants
     
-    def _get_scientific_name(self, common_name: str) -> str:
-        """Retorna el nombre científico correspondiente al nombre común de la planta"""
+    def _fuse_rna_rag(
+        self,
+        rna: List[Dict],
+        rag: List[Dict],
+        rna_precision: float,
+        rag_precision: float
+    ) -> List[Dict[str, Any]]:
+        """Fusión inteligente RNA + RAG"""
+        fusion = {}
+        
+        # Calcular pesos dinámicos
+        total_precision = rna_precision + rag_precision
+        if total_precision > 0:
+            rna_weight = rna_precision / total_precision
+            rag_weight = rag_precision / total_precision
+        else:
+            rna_weight = 0.5
+            rag_weight = 0.5
+        
+        logger.info(f"🎯 Pesos de fusión: RNA={rna_weight:.2f}, RAG={rag_weight:.2f}")
+        
+        # Agregar plantas de RNA
+        for plant in rna:
+            name = plant['name'].lower()
+            fusion[name] = {
+                **plant,
+                'fusion_score': plant['confidence'] * rna_weight,
+                'sources': ['RNA']
+            }
+        
+        # Agregar plantas de RAG
+        for plant in rag:
+            name = plant['name'].lower()
+            if name in fusion:
+                fusion[name]['fusion_score'] += plant['confidence'] * rag_weight
+                fusion[name]['confidence'] = max(fusion[name]['confidence'], plant['confidence'])
+                fusion[name]['sources'].append('RAG')
+            else:
+                fusion[name] = {
+                    **plant,
+                    'fusion_score': plant['confidence'] * rag_weight,
+                    'sources': ['RAG']
+                }
+        
+        # Ordenar por fusion_score
+        sorted_fusion = sorted(fusion.values(), key=lambda x: x['fusion_score'], reverse=True)
+        
+        # Reindexar ranks
+        for i, plant in enumerate(sorted_fusion, 1):
+            plant['rank'] = i
+        
+        logger.info(f"🎯 Fusión completada: {len(sorted_fusion)} plantas totales")
+        logger.info("🔍 Resultados de fusión:")
+        for i, plant in enumerate(sorted_fusion[:5], 1):
+            logger.info(f"   {i}. {plant['name']} - Score: {plant['fusion_score']:.3f}")
+            logger.info(f"      Sources: {plant.get('sources', [])}")
+            logger.info(f"      Conf: {plant.get('confidence', 0):.3f}")
+            
+        return sorted_fusion
+    
+    def _determine_system(self, rna_prec: float, rag_prec: float) -> str:
+        """Determina qué sistema fue más efectivo"""
+        if rna_prec > 0 and rag_prec > 0:
+            if rna_prec > rag_prec * 1.2:
+                return "RNA_PRIMARY"
+            elif rag_prec > rna_prec * 1.2:
+                return "RAG_PRIMARY"
+            else:
+                return "HYBRID_BALANCED"
+        elif rna_prec > 0:
+            return "RNA_ONLY"
+        elif rag_prec > 0:
+            return "RAG_ONLY"
+        else:
+            return "FALLBACK"
+    
+    async def _format_response_with_llm(
+        self,
+        recommendations: List[Dict],
+        patient_info: Dict[str, Any],
+        system: str,
+        precision: float
+    ) -> str:
+        """
+        LLM genera la respuesta final personalizada para el paciente.
+        Reemplaza _format_user_friendly_response().
+        """
+        plants_summary = []
+        for i, p in enumerate(recommendations[:3], 1):
+            plants_summary.append(
+                f"{i}. {p['name']} ({p.get('scientific_name','')}) "
+                f"- confianza: {p.get('confidence',0):.0%} "
+                f"- fuente: {'+'.join(p.get('sources',['N/A']))}"
+            )
+        
+        prompt = f"""Eres Fauno, un asistente empático de plantas medicinales peruanas.
+
+    Paciente con: {patient_info.get('symptoms', 'síntomas digestivos')}
+    Duración: {patient_info.get('duration', 'no especificada')}
+    Intensidad: {patient_info.get('intensidad_sintomas', 'moderada')}
+    Plantas recomendadas por el sistema híbrido RNA+RAG:
+    {chr(10).join(plants_summary)}
+
+    Redacta una respuesta cálida y clara para el paciente en español peruano:
+    - Presenta las 3 plantas con sus nombres
+    - Menciona brevemente por qué cada una ayuda con su síntoma específico
+    - Indica que puede elegir una escribiendo 1, 2 o 3
+    - Máximo 120 palabras
+    - Sin markdown ni bullets, solo texto natural
+
+    Responde SOLO el mensaje para el paciente:"""
+
+        try:
+            response = await self._call_groq_async(prompt, temperature=0.7)
+            if response:
+                logger.info("✅ Respuesta final generada por LLM")
+                return response.strip()
+        except Exception as e:
+            logger.error(f"❌ Error generando respuesta final: {e}")
+        
+        # Fallback al template hardcoded
+        return self._format_user_friendly_response(system, recommendations, precision)
+    
+    # ========== MÉTODOS AUXILIARES ==========
+    
+    def _convert_tuples_to_dicts(self, tuples_list: List[Tuple[str, float]]) -> List[Dict[str, Any]]:
+        """Convierte tuplas a diccionarios"""
+        result = []
+        for i, (plant_name, confidence) in enumerate(tuples_list, 1):
+            result.append({
+                'name': plant_name.title(),
+                'scientific_name': self._get_scientific_name_from_db(plant_name),
+                'confidence': float(confidence),
+                'rank': i,
+                'properties': [],
+                'source': 'RNA'
+            })
+        return result
+    
+    def _get_scientific_name_from_db(self, common_name: str) -> str:
+        """Obtiene nombre científico"""
         scientific_names = {
-            "muña": "Minthostachys mollis",
-            "uña de gato": "Uncaria tomentosa", 
-            "maca": "Lepidium meyenii",
-            "sangre de grado": "Croton lechleri",
-            "hercampuri": "Gentianella alborosea",
-            "chanca piedra": "Phyllanthus niruri",
-            "sacha inchi": "Plukenetia volubilis",
-            "camu camu": "Myrciaria dubia",
-            "tara": "Caesalpinia spinosa",
-            "yacón": "Smallanthus sonchifolius",
-            "matico": "Piper aduncum",
-            "coca": "Erythroxylum coca",
-            "aloe vera": "Aloe barbadensis miller",
-            "jengibre": "Zingiber officinale",
-            "caléndula": "Calendula officinalis",
-            "árbol de té": "Melaleuca alternifolia",
-            "eucalipto": "Eucalyptus globulus",
-            "boldo": "Peumus boldus",
-            "valeriana": "Valeriana officinalis",
-            "manzanilla": "Matricaria chamomilla",
-            "toronjil": "Melissa officinalis",
-            "hierba luisa": "Cymbopogon citratus",
-            "paico": "Dysphania ambrosioides",
-            "llantén": "Plantago major",
-            "cola de caballo": "Equisetum arvense"
+            'manzanilla': 'Matricaria chamomilla',
+            'menta': 'Mentha piperita',
+            'hierba luisa': 'Aloysia citrodora',
+            'eucalipto': 'Eucalyptus globulus',
+            'muña': 'Minthostachys mollis',
+            'uña de gato': 'Uncaria tomentosa',
+            'salvia': 'Salvia officinalis',
+            'matico': 'Buddleja globosa',
+            'boldo': 'Peumus boldus',
+            'jengibre': 'Zingiber officinale',
+            'sauco': 'Sambucus nigra',
+            'llantén': 'Plantago major',
+            'cedrón': 'Aloysia citrodora',
+            'hinojo': 'Foeniculum vulgare',
+            'anís': 'Pimpinella anisum'
         }
-        
-        return scientific_names.get(common_name, "Nombre científico no disponible")
+        return scientific_names.get(common_name.lower(), 'N/A')
     
-    # Método de compatibilidad con el código existente
+    def _get_rna_predictions(self, patient_info: Dict[str, Any]) -> List[Tuple[str, float]]:
+        """Obtiene predicciones RNA"""
+        try:
+            predictions = self.rna_model.predict(patient_info)
+            if predictions and 'top_3_plants' in predictions:
+                return [(plant, float(prob)) for plant, prob in predictions['top_3_plants']]
+            return []
+        except Exception as e:
+            logger.error(f"Error RNA: {e}")
+            return []
+    
+    def _calculate_rna_precision(self, rna_result):
+        """Calcula precisión RNA"""
+        if not rna_result:
+            return 0.0
+        if isinstance(rna_result, list) and len(rna_result) > 0:
+            if isinstance(rna_result[0], tuple):
+                return float(rna_result[0][1])
+        return 0.0
+    
+    # ========== MÉTODOS DE COMPATIBILIDAD ==========
+    
+    def get_hybrid_recommendations(self, patient_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Método síncrono"""
+        try:
+            return asyncio.run(self.get_hybrid_recommendations_async(patient_info))
+        except Exception as e:
+            logger.error(f"Error: {e}")
+            return {"error": str(e)}
+    
     def recommend(self, symptoms: str, top_n: int = 3) -> List[Dict[str, Any]]:
-        """Método de compatibilidad que mantiene la interfaz original"""
+        """Método simple"""
         patient_info = {"symptoms": symptoms}
         result = self.get_hybrid_recommendations(patient_info)
-        return result.get("final_recommendations", [])[:top_n]
+        return result.get('final_recommendations', [])[:top_n]
+    
+    async def _normalize_with_llm(self, patient_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        USA EL LLM para normalizar campos clínicos ambiguos.
+        Reemplaza _convert_duration_to_ordinal y _convert_intensity_to_ordinal.
+        """
+        prompt = f"""Eres un asistente clínico. Normaliza estos datos del paciente a valores numéricos.
+
+    Datos del paciente:
+    - Duración: "{patient_info.get('duration', '')}"
+    - Intensidad: "{patient_info.get('intensidad_sintomas', patient_info.get('intensity', ''))}"
+    - Síntomas: "{patient_info.get('symptoms', '')}"
+
+    Reglas:
+    - duration_ordinal: 0=horas, 1=1-3 días, 2=4-7 días, 3=2 semanas, 4=1 mes, 5=2-3 meses, 6=más de 6 meses. Infiere desde el texto.
+    - intensity_ordinal: 1=leve, 2=moderado, 3=severo. Infiere desde el contexto (ej: "bastante fuerte"=3, "un poco"=1).
+
+    Responde SOLO JSON válido:
+    {{"duration_ordinal": 2, "intensity_ordinal": 2, "normalization_notes": "brevísima explicación"}}"""
+
+        try:
+            # Necesitamos versión sync aquí — usar asyncio si es posible
+            import asyncio
+            result = self.rna_model  # placeholder — ver nota abajo
+            
+            response = await self._call_groq_async(prompt)
+            if response:
+                clean = response.strip().replace("```json","").replace("```","").strip()
+                data = json.loads(clean)
+                logger.info(f"✅ LLM normalizó: duration={data['duration_ordinal']}, intensity={data['intensity_ordinal']}")
+                return data
+        except Exception as e:
+            logger.error(f"❌ Error normalizando con LLM: {e}")
+        
+        # Fallback a los métodos hardcoded si LLM falla
+        return {
+            "duration_ordinal": self._convert_duration_to_ordinal(patient_info.get('duration', '')),
+            "intensity_ordinal": self._convert_intensity_to_ordinal(patient_info.get('intensidad_sintomas', ''))
+        }
+
+    async def _call_groq_async(self, prompt: str, temperature: float = 0.1) -> Optional[str]:
+        """Cliente Groq para el recommender"""
+        try:
+            from groq import Groq
+            import os
+            client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_tokens=200
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"❌ Groq error en recommender: {e}")
+            return None
+    
+# ========== ALIAS ==========
+HybridRecommender = IntelligentHybridRecommender

@@ -1,123 +1,153 @@
+// components/auth/EditProfilePage.tsx
 import React, { useState, useEffect } from 'react';
-import { Eye, EyeOff, Upload, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { Upload, X, Eye, EyeOff } from 'lucide-react';
+import { API_BASE_URL } from '../../App';
 
-interface RegistrationFormData {
-  fullName: string;
+interface UserProfile {
+  id: string;
+  full_name: string;
   email: string;
   username: string;
-  password: string;
-  confirmPassword: string;
   dni: string;
-  phoneNumber: string;
+  phone_number: string;
   age: number;
   gender: string;
   weight: number;
   height: number;
   zone: string;
   occupation: string;
-  profilePicture?: File | null;
+  profile_picture_url: string | null;
+  created_at: string;
+  role: string;
 }
 
 interface FormErrors {
   [key: string]: string;
 }
 
-interface RegisterFormProps {
-  onRegisterSuccess?: () => void;
-}
+const occupationOptions = [
+  "Sin nivel educativo/sin instrucción",
+  "Preescolar",
+  "Primaria incompleta",
+  "Primaria completa",
+  "Secundaria incompleta",
+  "Secundaria completa",
+  "Técnica superior incompleta",
+  "Técnica superior completa",
+  "Universitaria incompleta",
+  "Universitaria completa",
+  "Maestría/doctorado"
+];
 
-export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess }) => {
+export const EditProfilePage = () => {
   const navigate = useNavigate();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
-  const [formData, setFormData] = useState<RegistrationFormData>({
-    fullName: '',
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [profilePicture, setProfilePicture] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [touched, setTouched] = useState<{ [key: string]: boolean }>({});
+
+  // Form data state
+  const [formData, setFormData] = useState({
+    full_name: '',
     email: '',
-    username: '',
-    password: '',
-    confirmPassword: '',
     dni: '',
-    phoneNumber: '',
+    phone_number: '',
     age: 0,
     gender: '',
     weight: 0,
     height: 0,
     zone: '',
-    occupation: '',
-    profilePicture: null
+    occupation: ''
   });
 
-  const [errors, setErrors] = useState<FormErrors>({});
-  const [touched, setTouched] = useState<{ [key: string]: boolean }>({});
-  const [showPassword, setShowPassword] = useState<boolean>(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
-  const [profilePreview, setProfilePreview] = useState<string | null>(null);
-
-  const API_BASE_URL = process.env.NODE_ENV === 'production' 
-    ? process.env.REACT_APP_API_URL || 'https://*.com'
-    : process.env.REACT_APP_API_URL || 'http://localhost:8000';
-
-  const occupationOptions = [
-    "Sin nivel educativo/sin instrucción",
-    "Preescolar",
-    "Primaria incompleta",
-    "Primaria completa",
-    "Secundaria incompleta",
-    "Secundaria completa",
-    "Técnica superior incompleta",
-    "Técnica superior completa",
-    "Universitaria incompleta",
-    "Universitaria completa",
-    "Maestría/doctorado"
-  ];
-
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    
-    if (successMessage) {
-      timeoutId = setTimeout(() => {
-        if (onRegisterSuccess) {
-          onRegisterSuccess();
-        } else {
+    const loadUserProfile = async () => {
+      try {
+        const auth = localStorage.getItem('auth');
+        if (!auth) {
           navigate('/login');
+          return;
         }
-      }, 2000);
-    }
-  
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
+
+        const parsed = JSON.parse(auth);
+        const token = parsed.token;
+        const username = parsed.user?.username;
+
+        if (!token || !username) {
+          navigate('/login');
+          return;
+        }
+
+        const response = await fetch(`${API_BASE_URL}/api/user/${username}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error('No se pudo cargar el perfil');
+        }
+
+        const data = await response.json();
+        setUserProfile(data);
+        setPreviewUrl(data.profile_picture_url);
+        
+        // Inicializar formData con los datos del usuario
+        setFormData({
+          full_name: data.full_name,
+          email: data.email,
+          dni: data.dni,
+          phone_number: data.phone_number,
+          age: data.age,
+          gender: data.gender,
+          weight: data.weight,
+          height: data.height,
+          zone: data.zone,
+          occupation: data.occupation || ''
+        });
+      } catch (error) {
+        setError('Error al cargar el perfil. Por favor, inténtalo de nuevo.');
+        console.error('Error loading profile:', error);
+      } finally {
+        setLoading(false);
       }
     };
-  }, [successMessage, navigate, onRegisterSuccess]);
+
+    loadUserProfile();
+  }, [navigate]);
 
   useEffect(() => {
     return () => {
-      if (profilePreview) {
-        URL.revokeObjectURL(profilePreview);
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl);
       }
     };
-  }, [profilePreview]);
+  }, [previewUrl]);
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const { key, currentTarget } = e;
     const name = currentTarget.name;
     
-    if (name === 'fullName') {
+    if (name === 'full_name') {
       if (/[0-9]/.test(key)) {
         e.preventDefault();
       }
     }
     
-    if (name === 'dni' || name === 'phoneNumber' || name === 'height') {
+    if (name === 'dni' || name === 'phone_number' || name === 'height') {
       if (!/[0-9]/.test(key) && key !== 'Backspace' && key !== 'Delete' && key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Tab') {
         e.preventDefault();
       }
     }
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProfilePictureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -132,30 +162,29 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
       return;
     }
 
-    if (profilePreview) {
-      URL.revokeObjectURL(profilePreview);
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
     }
-    const previewUrl = URL.createObjectURL(file);
-    setProfilePreview(previewUrl);
-    
-    setFormData(prev => ({ ...prev, profilePicture: file }));
+    const newPreviewUrl = URL.createObjectURL(file);
+    setPreviewUrl(newPreviewUrl);
+    setProfilePicture(file);
     setErrors(prev => ({ ...prev, profilePicture: '' }));
   };
 
   const handleRemovePhoto = () => {
-    if (profilePreview) {
-      URL.revokeObjectURL(profilePreview);
-      setProfilePreview(null);
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
     }
-    setFormData(prev => ({ ...prev, profilePicture: null }));
+    setPreviewUrl(userProfile?.profile_picture_url || null);
+    setProfilePicture(null);
     setErrors(prev => ({ ...prev, profilePicture: '' }));
   };
 
-  const validateField = (name: string, value: string | number | File | null | undefined): string => {
+  const validateField = (name: string, value: string | number): string => {
     const fieldValue = value === undefined ? '' : value;
     
     switch (name) {
-      case 'fullName':
+      case 'full_name':
         if (!fieldValue) return 'El nombre completo es requerido';
         if (fieldValue.toString().length < 2) return 'El nombre completo debe tener al menos 2 caracteres';
         if (!/^[A-Za-zÁáÉéÍíÓóÚúÑñ ]+$/.test(fieldValue.toString())) {
@@ -168,43 +197,13 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
           return 'Ingrese un correo electrónico válido';
         }
         break;
-      case 'username':
-        if (!fieldValue) return 'El usuario es requerido';
-        if (!/(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d]{6,20}$/.test(fieldValue.toString())) {
-          return 'El usuario debe tener entre 6 y 20 caracteres, al menos una mayúscula, una minúscula y un número';
-        }
-        break;
-      case 'password':
-        if (!fieldValue) return 'La contraseña es requerida';
-        if (fieldValue.toString().length < 8) {
-          return 'La contraseña debe tener al menos 8 caracteres';
-        }
-        if (!/(?=.*[a-z])/.test(fieldValue.toString())) {
-          return 'La contraseña debe contener al menos una letra minúscula';
-        }
-        if (!/(?=.*[A-Z])/.test(fieldValue.toString())) {
-          return 'La contraseña debe contener al menos una letra mayúscula';
-        }
-        if (!/(?=.*\d)/.test(fieldValue.toString())) {
-          return 'La contraseña debe contener al menos un número';
-        }
-        if (!/(?=.*[@$!%*?&])/.test(fieldValue.toString())) {
-          return 'La contraseña debe contener al menos un carácter especial (@$!%*?&)';
-        }
-        break;
-      case 'confirmPassword':
-        if (!fieldValue) return 'Debe confirmar la contraseña';
-        if (fieldValue !== formData.password) {
-          return 'Las contraseñas no coinciden';
-        }
-        break;
       case 'dni':
         if (!fieldValue) return 'El DNI es requerido';
         if (!/^\d{8}$/.test(fieldValue.toString())) {
           return 'El DNI debe tener exactamente 8 dígitos numéricos';
         }
         break;
-      case 'phoneNumber':
+      case 'phone_number':
         if (!fieldValue) return 'El número de teléfono es requerido';
         if (!/^9\d{8}$/.test(fieldValue.toString())) {
           return 'El número debe empezar con 9 y tener 9 dígitos numéricos';
@@ -246,13 +245,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
       case 'occupation':
         if (!fieldValue) return 'El nivel educativo es requerido';
         break;
-      case 'profilePicture':
-        if (fieldValue instanceof File) {
-          if (fieldValue.size > 5 * 1024 * 1024) {
-            return 'La imagen no debe superar los 5MB';
-          }
-        }
-        break;
     }
     return '';
   };
@@ -262,15 +254,15 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
     const newTouched: { [key: string]: boolean } = {};
     
     const fieldsToValidate = [
-      'fullName', 'email', 'username', 'password', 'confirmPassword',
-      'dni', 'phoneNumber', 'age', 'gender', 'weight', 'height', 'zone', 'occupation'
+      'full_name', 'email', 'dni', 'phone_number', 'age', 
+      'gender', 'weight', 'height', 'zone', 'occupation'
     ];
     
     let isValid = true;
     
     fieldsToValidate.forEach(fieldName => {
       newTouched[fieldName] = true;
-      const fieldValue = formData[fieldName as keyof RegistrationFormData];
+      const fieldValue = formData[fieldName as keyof typeof formData];
       const valueForValidation = fieldValue === undefined ? '' : fieldValue;
       const error = validateField(fieldName, valueForValidation);
       
@@ -279,14 +271,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
         isValid = false;
       }
     });
-    
-    if (formData.profilePicture) {
-      const photoError = validateField('profilePicture', formData.profilePicture);
-      if (photoError) {
-        newErrors.profilePicture = photoError;
-        isValid = false;
-      }
-    }
     
     setTouched(newTouched);
     setErrors(newErrors);
@@ -297,7 +281,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
-    if (name === 'dni' || name === 'phoneNumber' || name === 'height') {
+    if (name === 'dni' || name === 'phone_number' || name === 'height') {
       if (!/^\d*$/.test(value)) {
         return;
       }
@@ -326,19 +310,24 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
       return;
     }
     
-    setIsSubmitting(true);
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
 
     try {
-      console.log('📤 Enviando registro...');
-      
+      const auth = localStorage.getItem('auth');
+      if (!auth || !userProfile) return;
+
+      const parsed = JSON.parse(auth);
+      const token = parsed.token;
+      const username = userProfile.username;
+
       const formDataToSend = new FormData();
       
-      formDataToSend.append('fullName', formData.fullName);
+      formDataToSend.append('full_name', formData.full_name);
       formDataToSend.append('email', formData.email);
-      formDataToSend.append('username', formData.username);
-      formDataToSend.append('password', formData.password);
       formDataToSend.append('dni', formData.dni);
-      formDataToSend.append('phoneNumber', formData.phoneNumber);
+      formDataToSend.append('phone_number', formData.phone_number);
       formDataToSend.append('age', formData.age.toString());
       formDataToSend.append('gender', formData.gender);
       formDataToSend.append('weight', formData.weight.toString());
@@ -346,53 +335,57 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
       formDataToSend.append('zone', formData.zone);
       formDataToSend.append('occupation', formData.occupation || '');
       
-      if (formData.profilePicture) {
-        formDataToSend.append('profile_picture', formData.profilePicture);
-        console.log('📸 Foto incluida en registro');
+      if (profilePicture) {
+        formDataToSend.append('profile_picture', profilePicture);
       }
 
-      console.log('🚀 Enviando a:', `${API_BASE_URL}/api/register`);
-      
-      const response = await fetch(`${API_BASE_URL}/api/register`, {
-        method: 'POST',
-        body: formDataToSend
+      const response = await fetch(`${API_BASE_URL}/api/user/${username}/update`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formDataToSend,
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        console.error('❌ Error del servidor:', data);
-        
         if (data.detail) {
-          if (data.detail.includes("usuario") || data.detail.includes("username")) {
-            setErrors(prev => ({ ...prev, username: data.detail }));
-          } else if (data.detail.includes("correo") || data.detail.includes("email")) {
+          if (data.detail.includes("correo") || data.detail.includes("email")) {
             setErrors(prev => ({ ...prev, email: data.detail }));
           } else if (data.detail.includes("DNI") || data.detail.includes("dni")) {
             setErrors(prev => ({ ...prev, dni: data.detail }));
           } else if (data.detail.includes("teléfono") || data.detail.includes("phone")) {
-            setErrors(prev => ({ ...prev, phoneNumber: data.detail }));
+            setErrors(prev => ({ ...prev, phone_number: data.detail }));
           } else if (data.detail.includes("imagen") || data.detail.includes("foto")) {
             setErrors(prev => ({ ...prev, profilePicture: data.detail }));
           } else {
-            alert(`Error: ${data.detail}`);
+            setError(`Error: ${data.detail}`);
           }
         } else {
-          alert('Error desconocido del servidor');
+          setError('Error desconocido del servidor');
         }
-        
-        setIsSubmitting(false);
+        setSaving(false);
         return;
       }
 
-      console.log('✅ Registro exitoso:', data);
-      setSuccessMessage(data.message || '¡Usuario registrado exitosamente! Redirigiendo al login...');
+      setUserProfile(data.user);
+      setSuccess('Perfil actualizado exitosamente');
+      
+      if (data.user.profile_picture_url) {
+        setPreviewUrl(data.user.profile_picture_url);
+      }
+      
+      setProfilePicture(null);
+      
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
 
     } catch (error) {
-      console.error('❌ Error de red:', error);
-      alert('Error de conexión. Verifica que el servidor esté ejecutándose en http://localhost:8000');
+      setError(error instanceof Error ? error.message : 'Error al actualizar el perfil');
     } finally {
-      setIsSubmitting(false);
+      setSaving(false);
     }
   };
 
@@ -407,56 +400,112 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
     return null;
   };
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="mt-4 text-slate-600 text-lg">Cargando perfil...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!userProfile) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-slate-600 text-lg mb-4">No se pudo cargar el perfil.</p>
+          <button
+            onClick={() => navigate('/chat')}
+            className="px-6 py-3 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-all shadow-md hover:shadow-lg"
+          >
+            Volver al Chat
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="w-full max-w-6xl mx-auto">
+    <div className="w-full max-w-5xl mx-auto px-4">
       <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-emerald-100/50 overflow-hidden">
         
         {/* Header compacto */}
-        <div className="bg-gradient-to-r from-emerald-600 to-teal-700 p-4 text-center">
-          <h2 className="text-2xl font-bold text-white">Registro de Usuario</h2>
-          <p className="text-emerald-100 text-sm mt-1">Completa tus datos para comenzar</p>
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-700 p-3 text-center">
+          <h2 className="text-xl font-bold text-white">Editar Perfil</h2>
+          <p className="text-emerald-100 text-xs mt-1">Actualiza tu información personal</p>
         </div>
 
         {/* Formulario */}
-        <form onSubmit={handleSubmit} className="p-6">
+        <form onSubmit={handleSubmit} className="p-4">
           
-          {/* Success message */}
-          {successMessage && (
-            <div className="mb-4 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-lg">
+          {/* Success/Error messages */}
+          {error && (
+            <div className="mb-4 p-3 bg-rose-50 border-l-4 border-rose-500 rounded-lg">
               <div className="flex items-center gap-2">
-                <span className="text-emerald-500 text-lg">✓</span>
-                <p className="text-emerald-700 text-sm font-medium">{successMessage}</p>
+                <span className="text-rose-500 text-lg">✕</span>
+                <p className="text-rose-700 text-sm font-medium">{error}</p>
               </div>
             </div>
           )}
 
-          <div className="space-y-4">
+          {success && (
+            <div className="mb-4 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-lg">
+              <div className="flex items-center gap-2">
+                <span className="text-emerald-500 text-lg">✓</span>
+                <p className="text-emerald-700 text-sm font-medium">{success}</p>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-3">
             
             {/* Foto de perfil */}
-            <div className="bg-gradient-to-br from-slate-50 to-emerald-50 p-4 rounded-xl border border-emerald-100 flex items-center gap-5">
+            <div className="bg-gradient-to-br from-slate-50 to-emerald-50 p-3 rounded-xl border border-emerald-100 flex items-center gap-3">
               <div className="flex-shrink-0">
                 <div className="relative">
-                  <div className="w-20 h-20 rounded-full overflow-hidden border-3 border-white shadow-lg bg-gradient-to-br from-emerald-100 to-teal-100">
-                    {profilePreview ? (
-                      <img src={profilePreview} alt="Preview" className="w-full h-full object-cover" />
+                  <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-white shadow-md bg-gradient-to-br from-emerald-100 to-teal-100">
+                    {previewUrl ? (
+                      <img 
+                        src={previewUrl} 
+                        alt="Preview" 
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.style.display = 'none';
+                          const fallbackDiv = target.parentNode as HTMLDivElement;
+                          fallbackDiv.className = 'w-16 h-16 bg-gradient-to-br from-emerald-400 to-teal-500 rounded-full flex items-center justify-center text-white font-bold text-xl border-2 border-white shadow-md';
+                          fallbackDiv.innerHTML = userProfile.full_name.charAt(0).toUpperCase();
+                        }}
+                      />
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center text-slate-400">
-                        <Upload size={28} />
+                        <Upload size={24} />
                       </div>
                     )}
                   </div>
                   
-                  <div className="absolute -bottom-1 -right-1 flex gap-1">
+                  <div className="absolute -bottom-0.5 -right-0.5 flex gap-1">
                     <label className="cursor-pointer">
-                      <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" onChange={handleFileSelect} className="hidden" />
-                      <div className="w-8 h-8 bg-emerald-500 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-emerald-600 transition-all">
-                        <Upload size={16} />
+                      <input 
+                        type="file" 
+                        accept="image/jpeg,image/png,image/gif,image/webp" 
+                        onChange={handleProfilePictureChange} 
+                        className="hidden" 
+                      />
+                      <div className="w-6 h-6 bg-emerald-500 text-white rounded-full flex items-center justify-center shadow-md hover:bg-emerald-600 transition-all">
+                        <Upload size={14} />
                       </div>
                     </label>
                     
-                    {profilePreview && (
-                      <button type="button" onClick={handleRemovePhoto} className="w-8 h-8 bg-rose-500 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-rose-600 transition-all">
-                        <X size={16} />
+                    {profilePicture && (
+                      <button 
+                        type="button" 
+                        onClick={handleRemovePhoto} 
+                        className="w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center shadow-md hover:bg-rose-600 transition-all"
+                      >
+                        <X size={14} />
                       </button>
                     )}
                   </div>
@@ -464,13 +513,13 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
               </div>
 
               <div className="flex-1">
-                <p className="text-sm font-semibold text-slate-700">Foto de Perfil <span className="text-slate-400 font-normal">(Opcional)</span></p>
-                <p className="text-xs text-slate-500 mt-0.5">JPG, PNG, GIF, WebP • Máximo 5MB</p>
+                <p className="text-xs font-semibold text-slate-700">Foto de Perfil <span className="text-slate-400 font-normal">(Opcional)</span></p>
+                <p className="text-xs text-slate-500 mt-0.5">JPG, PNG, GIF, WebP • Máx 5MB</p>
               </div>
             </div>
 
-            {/* 🔥 GRID DE 4 COLUMNAS - NUEVO ORDEN CON NIVEL EDUCATIVO ARRIBA */}
-            <div className="grid grid-cols-4 gap-3">
+            {/* GRID DE 4 COLUMNAS - EXACTO AL REGISTERFORM */}
+            <div className="grid grid-cols-4 gap-2">
               
               {/* Fila 1: Nombre completo (2 cols) + Email + Username */}
               <div className="col-span-2">
@@ -479,16 +528,16 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
                 </label>
                 <input
                   type="text"
-                  name="fullName"
+                  name="full_name"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                   placeholder="Tu nombre completo"
-                  value={formData.fullName}
+                  value={formData.full_name}
                   onChange={handleChange}
                   onBlur={handleBlur}
                   onKeyPress={handleKeyPress}
                   required
                 />
-                {renderError('fullName')}
+                {renderError('full_name')}
               </div>
 
               <div>
@@ -510,22 +559,18 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Usuario <span className="text-rose-500">*</span>
+                  Usuario
                 </label>
                 <input
                   type="text"
-                  name="username"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                  placeholder="Usuario123"
-                  value={formData.username}
-                  onChange={handleChange}
-                  onBlur={handleBlur}
-                  required
+                  value={userProfile.username}
+                  disabled
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-slate-50 text-slate-500 cursor-not-allowed"
                 />
-                {renderError('username')}
+                <p className="text-xs text-slate-400 mt-0.5">No se puede modificar</p>
               </div>
 
-              {/* Fila 2: DNI + Teléfono + Password + Confirmar */}
+              {/* Fila 2: DNI + Teléfono + Edad + Género */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   DNI <span className="text-rose-500">*</span>
@@ -551,72 +596,19 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
                 </label>
                 <input
                   type="text"
-                  name="phoneNumber"
+                  name="phone_number"
                   maxLength={9}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                   placeholder="987654321"
-                  value={formData.phoneNumber}
+                  value={formData.phone_number}
                   onChange={handleChange}
                   onBlur={handleBlur}
                   onKeyPress={handleKeyPress}
                   required
                 />
-                {renderError('phoneNumber')}
+                {renderError('phone_number')}
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Contraseña <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    name="password"
-                    className="w-full px-3 py-2 pr-10 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                    placeholder="••••••••"
-                    value={formData.password}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    required
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-emerald-600"
-                    onClick={() => setShowPassword(!showPassword)}
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-                {renderError('password')}
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Confirmar <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type={showConfirmPassword ? "text" : "password"}
-                    name="confirmPassword"
-                    className="w-full px-3 py-2 pr-10 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                    placeholder="••••••••"
-                    value={formData.confirmPassword}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    required
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-emerald-600"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  >
-                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-                {renderError('confirmPassword')}
-              </div>
-
-              {/* Fila 3: Edad + Género + Peso + Altura */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Edad <span className="text-rose-500">*</span>
@@ -656,6 +648,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
                 {renderError('gender')}
               </div>
 
+              {/* Fila 3: Peso + Altura + Zona + Espacio vacío */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Peso (kg) <span className="text-rose-500">*</span>
@@ -695,7 +688,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
                 {renderError('height')}
               </div>
 
-              {/* 🔥 Fila 4: Zona (1 col) + Nivel Educativo (3 cols) - NIVEL EDUCATIVO AHORA ARRIBA */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Zona <span className="text-rose-500">*</span>
@@ -715,6 +707,10 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
                 {renderError('zone')}
               </div>
 
+              {/* Espacio vacío en la cuarta columna */}
+              <div></div>
+
+              {/* Fila 4: Nivel Educativo (3 cols) + Espacio vacío */}
               <div className="col-span-3">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Nivel Educativo <span className="text-rose-500">*</span>
@@ -734,33 +730,48 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
                 </select>
                 {renderError('occupation')}
               </div>
+
+              {/* Espacio vacío en la cuarta columna */}
+              <div></div>
             </div>
 
-            {/* Botón de submit */}
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className={`w-full bg-gradient-to-r from-emerald-600 to-teal-700 text-white font-bold py-3 rounded-xl hover:from-emerald-700 hover:to-teal-800 text-base shadow-lg hover:shadow-xl ${
-                isSubmitting ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.01] transition-all'
-              }`}
-            >
-              {isSubmitting ? 'Registrando...' : 'Registrarse'}
-            </button>
+            {/* Botones */}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => navigate('/chat')}
+                className="flex-1 px-4 py-2.5 border-2 border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 transition-all text-sm font-medium shadow-sm hover:shadow"
+                disabled={saving}
+              >
+                Cancelar
+              </button>
+              
+              <button
+                type="submit"
+                disabled={saving}
+                className={`flex-1 bg-gradient-to-r from-emerald-600 to-teal-700 text-white font-bold py-2.5 rounded-xl hover:from-emerald-700 hover:to-teal-800 text-sm shadow-lg hover:shadow-xl ${
+                  saving ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.01] transition-all'
+                }`}
+              >
+                {saving ? 'Guardando...' : 'Guardar Cambios'}
+              </button>
+            </div>
           </div>
         </form>
 
         {/* Footer */}
-        <div className="bg-slate-50 px-6 py-3 border-t border-slate-100">
-          <div className="flex items-center justify-center gap-2 text-sm">
-            <span className="text-slate-600">¿Ya tienes cuenta?</span>
-            <a href="/login" className="text-emerald-600 hover:text-emerald-700 font-semibold hover:underline">
-              Inicia sesión
-            </a>
+        <div className="bg-slate-50 px-4 py-2 border-t border-slate-100">
+          <div className="flex items-center justify-center gap-2 text-xs">
+            <span className="text-slate-600">¿Necesitas ayuda?</span>
+            <button
+              onClick={() => navigate('/chat')}
+              className="text-emerald-600 hover:text-emerald-700 font-semibold hover:underline"
+            >
+              Volver al chat
+            </button>
           </div>
         </div>
       </div>
     </div>
   );
 };
-
-export default RegisterForm;
