@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Eye, EyeOff, Upload, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { PrivacyPolicyModal } from '../legal/PrivacyPolicyModal';
 
 interface RegistrationFormData {
   fullName: string;
@@ -53,6 +54,11 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [profilePreview, setProfilePreview] = useState<string | null>(null);
+
+  // 🔒 Consentimiento de tratamiento de datos personales (Ley N.º 29733)
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [consentError, setConsentError] = useState('');
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
   const API_BASE_URL = process.env.NODE_ENV === 'production' 
     ? process.env.REACT_APP_API_URL || 'https://*.com'
@@ -316,8 +322,22 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
     setErrors(prev => ({ ...prev, [name]: error }));
   };
 
+  // 🔒 Maneja el cambio del checkbox de consentimiento y limpia su error al marcarlo
+  const handleConsentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setConsentGiven(e.target.checked);
+    if (e.target.checked) {
+      setConsentError('');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 🔒 Guard de consentimiento — no continúa si no fue marcado
+    if (!consentGiven) {
+      setConsentError('Debes autorizar el tratamiento de tus datos personales para poder registrarte.');
+      return;
+    }
     
     const isFormValid = validateAllFields();
     
@@ -736,12 +756,44 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
               </div>
             </div>
 
+            {/* 🔒 Checkbox de consentimiento — tratamiento de datos personales (Ley N.º 29733) */}
+            <div className="bg-gradient-to-br from-slate-50 to-emerald-50 p-4 rounded-xl border border-emerald-100">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  name="consent"
+                  checked={consentGiven}
+                  onChange={handleConsentChange}
+                  className="mt-0.5 h-4 w-4 flex-shrink-0 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <span className="text-xs text-slate-600 leading-relaxed">
+                  Autorizo el tratamiento de mis datos personales, incluyendo datos de salud
+                  (síntomas, edad, peso), para generar recomendaciones personalizadas y para el
+                  uso de mi retroalimentación de forma agregada y/o anonimizada en la mejora del
+                  sistema. He leído la{' '}
+                  <button
+                    type="button"
+                    onClick={() => setShowPrivacyModal(true)}
+                    className="text-emerald-600 hover:text-emerald-700 font-semibold hover:underline"
+                  >
+                    Política de Privacidad
+                  </button>
+                  . <span className="text-rose-500">*</span>
+                </span>
+              </label>
+              {consentError && (
+                <div className="text-xs text-rose-600 mt-2">
+                  {consentError}
+                </div>
+              )}
+            </div>
+
             {/* Botón de submit */}
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || !consentGiven}
               className={`w-full bg-gradient-to-r from-emerald-600 to-teal-700 text-white font-bold py-3 rounded-xl hover:from-emerald-700 hover:to-teal-800 text-base shadow-lg hover:shadow-xl ${
-                isSubmitting ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.01] transition-all'
+                isSubmitting || !consentGiven ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.01] transition-all'
               }`}
             >
               {isSubmitting ? 'Registrando...' : 'Registrarse'}
@@ -759,6 +811,8 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onRegisterSuccess })
           </div>
         </div>
       </div>
+
+      <PrivacyPolicyModal isOpen={showPrivacyModal} onClose={() => setShowPrivacyModal(false)} />
     </div>
   );
 };
